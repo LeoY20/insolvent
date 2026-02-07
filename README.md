@@ -2,19 +2,19 @@
 
 **Hospital Pharmacy Supply Chain Intelligence Platform**
 
-A multi-agent AI system that predicts drug shortages, finds substitutes, and generates purchase orders to prevent surgical disruptions.  
-Built for **TartanHacks 2026** at **Carnegie Mellon University**.
+A multi-agent AI supply-chain system that predicts drug shortages, finds substitutes, and generates purchase orders to prevent surgical disruptions.  
+Built for **TartanHacks 2025** at **Carnegie Mellon University**.
 
 ---
 
 ## Overview
 
-PharmaSentinel monitors **10 example critical hospital drugs** (ranked by criticality 1–10) and uses AI agents to:
+For example purposes PharmaSentinel monitors **10 critical hospital drugs** and uses AI agents to:
 
-- **Predict shortages** via FDA data and Brave Search
+- **Predict shortages** via FDA data and Web Search
 - **Find clinical substitutes** dynamically when drugs are unavailable (the Substitute Agent identifies valid alternatives)
-- **Optimize supplier selection** based on urgency, cost, and supply chain signals
-- **Generate purchase orders** from distributors or nearby hospitals
+- **Optimize supplier selection** based on urgency, cost, location, and supply chain signals
+- **Generate autonmatic purchase orders** from distributors and usage prediction
 
 ---
 
@@ -27,7 +27,7 @@ PharmaSentinel monitors **10 example critical hospital drugs** (ranked by critic
 │                   (Supabase Realtime)                        │
 └───────────────────────┬─────────────────────────────────────┘
                         │
-              Supabase (PostgreSQL + Realtime)
+                   PostgreSQL 
                         │
 ┌───────────────────────▼─────────────────────────────────────┐
 │                 BACKEND SERVER (server.py)                   │
@@ -35,12 +35,12 @@ PharmaSentinel monitors **10 example critical hospital drugs** (ranked by critic
 │  ┌─────────────────────────────────────────────────────┐     │
 │  │  CONTINUOUS PIPELINE (runs every ~60 min)           │     │
 │  │  Phase 1: Agent 0 (Inventory) + Agent 1 (FDA)       │     │
-│  │  Phase 2: Agent 2 (News via Brave MCP)              │     │
+│  │  Phase 2: Agent 2 (News via Web MCP)              │     │
 │  │  Phase 3: Overseer → Alerts + Agent 3 (Substitutes) │     │
 │  └─────────────────────────────────────────────────────┘     │
 │                                                              │
 │  ┌─────────────────────────────────────────────────────┐     │
-│  │  ORDER AGENT (API-triggered, independent)           │     │
+│  │  ORDER AGENT (API-triggered)           │     │
 │  │  Agent 4: Pricing Analysis & Order Generation       │     │
 │  └─────────────────────────────────────────────────────┘     │
 └──────────────────────────────────────────────────────────────┘
@@ -55,8 +55,8 @@ PharmaSentinel monitors **10 example critical hospital drugs** (ranked by critic
 |-------|------|
 | **Agent 0 (Inventory)** | Monitors stock, predicts usage (based on surgery schedule), calculates burn rates |
 | **Agent 1 (FDA)** | Pulls FDA drug shortage database |
-| **Agent 2 (News)** | Uses Brave MCP to find supply chain disruption signals |
-| **Overseer** | Synthesizes data into actionable alerts |
+| **Agent 2 (News)** | Uses Web (Brave) MCP to find supply chain disruption signals from news|
+| **Overseer** | Synthesizes data from Agent 0-2 into actionable alerts |
 | **Agent 3 (Substitutes)** | Substitute Agent finds valid clinical substitutes when drugs are unavailable |
 | **Agent 4 (Orders)** | Analyzes pricing/availability, builds purchase orders |
 
@@ -68,7 +68,7 @@ PharmaSentinel monitors **10 example critical hospital drugs** (ranked by critic
 - Python 3.11+
 - Node.js 18+
 - Supabase project
-- LLM API Keys (Anthropic/OpenAI)
+- LLM API Keys (Anthropic/OpenAI/Dedalus etc.)
 
 ### 1. Database Setup
 1. Create a Supabase project
@@ -92,7 +92,6 @@ cd frontend
 npm install
 npm run dev
 ```
-
 ---
 
 ## Future Work
@@ -100,19 +99,3 @@ npm run dev
 - **Manual Drug Entry** — Allow users to manually add new drugs to the monitoring list via the UI
 - **Database Integration** — Connect directly to existing hospital inventory databases
 
----
-
-## Credits
-
-Built at **TartanHacks 2026** (Carnegie Mellon University) using:
-- **Supabase** — Database + Realtime
-- **Brave MCP** — Web search for supply chain news
-- **Anthropic Claude** — LLM reasoning
-- **React + TypeScript** — Frontend
-- **Python** — Backend agents
-
----
-
-## License
-
-Hackathon/educational project. No license specified.
