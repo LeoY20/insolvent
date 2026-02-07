@@ -135,7 +135,7 @@ JSON Schema:
 
     # Dedalus supports various models. Using a standard provider/model identifier.
     payload = {
-        "model": "openai/gpt-4o-mini", 
+        "model": "openai/gpt-4o", 
         "messages": [
             {"role": "system", "content": full_system_prompt},
             {"role": "user", "content": user_prompt}

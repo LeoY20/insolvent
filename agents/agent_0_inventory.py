@@ -97,6 +97,35 @@ def analyze_with_llm(inventory: list, schedule: list) -> dict | None:
     return None
 
 
+def normalize_analysis(analysis: dict, inventory: list) -> dict:
+    """Ensure burn rates are deterministic based on inventory numbers."""
+    inventory_by_name = {d["name"]: d for d in inventory}
+    for item in analysis.get("drug_analysis", []):
+        name = item.get("drug_name")
+        if not name or name not in inventory_by_name:
+            continue
+
+        inv = inventory_by_name[name]
+        stock = float(inv.get("stock_quantity") or 0)
+        usage = float(inv.get("usage_rate_daily") or 0)
+        predicted_usage = item.get("predicted_daily_usage_rate")
+        try:
+            predicted_usage = float(predicted_usage)
+        except (TypeError, ValueError):
+            predicted_usage = usage
+
+        burn_rate = stock / usage if usage > 0 else None
+        predicted_burn = stock / predicted_usage if predicted_usage > 0 else None
+
+        item["current_stock"] = stock
+        item["daily_usage_rate"] = usage
+        item["predicted_daily_usage_rate"] = predicted_usage
+        item["burn_rate_days"] = round(burn_rate, 1) if burn_rate is not None else None
+        item["predicted_burn_rate_days"] = round(predicted_burn, 1) if predicted_burn is not None else None
+
+    return analysis
+
+
 def upsert_predictions(analysis: dict, inventory: list):
     if not supabase:
         print("  No Supabase client - skipping DB writes.")
@@ -142,6 +171,7 @@ def run(run_id: UUID):
 
         analysis = analyze_with_llm(inventory, schedule)
         if analysis:
+            analysis = normalize_analysis(analysis, inventory)
             print("  LLM analysis complete.")
             upsert_predictions(analysis, inventory)
             log_agent_output(AGENT_NAME, run_id, analysis, analysis.get("summary", "Done."))

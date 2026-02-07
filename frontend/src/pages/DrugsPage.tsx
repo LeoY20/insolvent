@@ -18,6 +18,11 @@ export default function DrugsPage() {
     fetchDrugs()
   }, [])
 
+  function normalizeName(value: string | null | undefined) {
+    if (!value) return ''
+    return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  }
+
   async function fetchDrugs() {
     const { data: drugsData } = await supabase.from('drugs').select('*').order('criticality_rank')
 
@@ -37,7 +42,11 @@ export default function DrugsPage() {
       const drugsWithRelations: DrugWithRelations[] = drugsData.map((drug: Drug) => ({
         ...drug,
         substitutes: substitutes.filter((s: Substitute) => s.drug_name === drug.name),
-        shortages: shortages.filter((s: Shortage) => s.drug_name === drug.name),
+        shortages: shortages.filter((s: Shortage) => {
+          const drugKey = normalizeName(drug.name)
+          const shortageKey = normalizeName(s.drug_name)
+          return drugKey !== '' && drugKey === shortageKey
+        }),
         suppliers: suppliers.filter((s: Supplier) => s.drug_name === drug.name)
       }))
 
