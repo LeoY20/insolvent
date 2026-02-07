@@ -96,8 +96,6 @@ MONITORED_DRUG_NAMES: List[str] = [drug["name"] for drug in MONITORED_DRUGS]
 # Dedalus LLM API Wrapper
 # ============================================================================
 
-DEDALUS_API_URL = os.getenv('DEDALUS_API_URL', 'https://api.dedaluslabs.ai/v1/chat/completions')
-
 def call_dedalus(
     system_prompt: str,
     user_prompt: str,
@@ -116,7 +114,9 @@ def call_dedalus(
         print(f"WARNING: Cannot call Dedalus. API key at index {api_key_index} is a placeholder.")
         return None
 
-    # Build the full system prompt with JSON schema
+    # Dedalus API endpoint ( OpenAI compatible )
+    dedalus_api_url = "https://api.dedaluslabs.ai/v1/chat/completions"
+
     full_system_prompt = f"""{system_prompt}
 
 You MUST respond with a valid JSON object that conforms to the following schema.
@@ -131,8 +131,9 @@ JSON Schema:
         "Content-Type": "application/json"
     }
 
+    # Dedalus supports various models. Using a standard provider/model identifier.
     payload = {
-        "model": "dedalus-agent-model",
+        "model": "openai/gpt-4o-mini", 
         "messages": [
             {"role": "system", "content": full_system_prompt},
             {"role": "user", "content": user_prompt}
@@ -141,15 +142,23 @@ JSON Schema:
         "response_format": {"type": "json_object"}
     }
 
-    llm_response_text = ""
     try:
-        print(f"Calling Dedalus API (key_index={api_key_index})...")
-        response = requests.post(DEDALUS_API_URL, headers=headers, json=payload, timeout=90)
-        response.raise_for_status()
+        # print(f"Calling Dedalus API (key_index={api_key_index})...")
+        response = requests.post(dedalus_api_url, headers=headers, json=payload, timeout=90)
+        
+        if response.status_code != 200:
+            print(f"ERROR: Dedalus API returned status {response.status_code}")
+            print(f"Response: {response.text}")
+            return None
 
-        llm_response_text = response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        result = response.json()
+        llm_response_text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
 
-        # Handle responses wrapped in markdown code fences
+        if not llm_response_text:
+            print("ERROR: Empty response from Dedalus API.")
+            return None
+
+        # Fallback parsing if the model still wraps in markdown despite instructions
         if "```json" in llm_response_text:
             match = re.search(r"```json\n(.*?)\n```", llm_response_text, re.DOTALL)
             if match:
@@ -166,10 +175,7 @@ JSON Schema:
         return None
     except json.JSONDecodeError as e:
         print(f"ERROR: Failed to decode JSON response from LLM: {e}")
-        print(f"Raw response: {llm_response_text[:500] if llm_response_text else 'empty'}")
-        return None
-    except Exception as e:
-        print(f"ERROR: Unexpected error in Dedalus API call: {e}")
+        print(f"Raw response: {llm_response_text[:500]}")
         return None
 
 # ============================================================================
