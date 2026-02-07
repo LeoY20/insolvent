@@ -194,7 +194,7 @@ export default function DrugsPage() {
                                 <Line
                                   type="monotone"
                                   dataKey="stock"
-                                  stroke="#10b981"
+                                  stroke="#2563eb"
                                   strokeWidth={2}
                                   name="Projected Stock"
                                   dot={false}
@@ -203,7 +203,8 @@ export default function DrugsPage() {
                                   <Line
                                     type="monotone"
                                     dataKey="stockAfter"
-                                    stroke="#10b981"
+                                    stroke="#16a34a"
+                                    strokeDasharray="6 4"
                                     strokeWidth={2}
                                     name="Projected Stock (After Order)"
                                     dot={false}

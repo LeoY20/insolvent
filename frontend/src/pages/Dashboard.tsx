@@ -170,7 +170,16 @@ export default function Dashboard() {
 
   const actionCardsData = useMemo(() => {
     return alerts
-      .filter(a => !a.acknowledged && a.action_required === true)
+      .filter(a => {
+        const actionRequiredTypes = new Set([
+          'RESTOCK_NOW',
+          'SUBSTITUTE_RECOMMENDED',
+          'SCHEDULE_CHANGE',
+          'SUPPLY_CHAIN_RISK'
+        ])
+        const isActionRequired = a.action_required === true || actionRequiredTypes.has(a.alert_type)
+        return !a.acknowledged && isActionRequired
+      })
       .map(alert => createActionCardData(undefined, alert))
       .filter((card): card is ActionCardData => card !== null)
       .sort((a, b) => getSeverityWeight(b.severity) - getSeverityWeight(a.severity));
@@ -178,8 +187,15 @@ export default function Dashboard() {
 
   const systemAlertsData = useMemo(() => {
     return alerts.filter(a =>
-      !a.acknowledged &&
-      !a.action_required
+      !a.acknowledged && !(
+        a.action_required === true ||
+        new Set([
+          'RESTOCK_NOW',
+          'SUBSTITUTE_RECOMMENDED',
+          'SCHEDULE_CHANGE',
+          'SUPPLY_CHAIN_RISK'
+        ]).has(a.alert_type)
+      )
     ).map(alert => createActionCardData(undefined, alert)).filter(Boolean) as ActionCardData[];
   }, [alerts]);
 
