@@ -101,9 +101,11 @@ def call_dedalus(
     user_prompt: str,
     api_key_index: int,
     json_schema: Dict[str, Any],
+    tools: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Calls the Dedalus LLM API and returns a parsed JSON response.
+    Supports optional tool definitions.
     """
     if not (0 <= api_key_index < len(DEDALUS_API_KEYS) and DEDALUS_API_KEYS[api_key_index]):
         print(f"ERROR: Dedalus API key at index {api_key_index} is not configured.")
@@ -141,6 +143,11 @@ JSON Schema:
         "temperature": 0.2,
         "response_format": {"type": "json_object"}
     }
+    
+    if tools:
+        payload["tools"] = tools
+        # If tools are present, we might not want to force JSON object response format strictly if the intent is to call a tool
+        # But per current architecture, agents expect JSON. We'll leave it but the model might override to call a tool.
 
     try:
         # print(f"Calling Dedalus API (key_index={api_key_index})...")
@@ -152,10 +159,15 @@ JSON Schema:
             return None
 
         result = response.json()
-        llm_response_text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+        message = result.get("choices", [{}])[0].get("message", {})
+        llm_response_text = message.get("content", "")
+        tool_calls = message.get("tool_calls", None)
+        
+        if tool_calls:
+            return {"tool_calls": tool_calls, "content": llm_response_text}
 
         if not llm_response_text:
-            print("ERROR: Empty response from Dedalus API.")
+            print("ERROR: Empty response (no content or tool_calls) from Dedalus API.")
             return None
 
         # Fallback parsing if the model still wraps in markdown despite instructions

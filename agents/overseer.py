@@ -34,7 +34,7 @@ API_KEY_INDEX = 1
 EXPECTED_JSON_SCHEMA = {
     "decisions": [
         {
-            "action_type": "RESTOCK_NOW | SHORTAGE_WARNING | SUBSTITUTE_RECOMMENDED | SCHEDULE_CHANGE | SUPPLY_CHAIN_RISK | AUTO_ORDER_PLACED",
+            "action_type": "RESTOCK_NOW | SHORTAGE_WARNING | SUBSTITUTE_RECOMMENDED | SCHEDULE_CHANGE",
             "severity": "INFO | WARNING | URGENT | CRITICAL",
             "drug_name": "string",
             "title": "string (short headline)",
@@ -60,8 +60,7 @@ def build_system_prompt() -> str:
     decision_framework = """
 # DECISION FRAMEWORK
 - **IMMEDIATE (burn_rate < 7 days)**: Generate `RESTOCK_NOW` alert. If criticality is <= 5 AND there's an active shortage, also trigger a `SUBSTITUTE_RECOMMENDED` alert.
-- **WARNING (burn_rate 7–14 days)**: Generate `SHORTAGE_WARNING`. Escalate severity if FDA/news signals confirm a shortage.
-- **PLANNING (burn_rate 14–30 days + any risk signal)**: Generate `SUPPLY_CHAIN_RISK` alert.
+- **WARNING (burn_rate 7–30 days + any risk signal)**: Generate `SHORTAGE_WARNING`. Escalate severity if FDA/news signals confirm a shortage.
 - **Severity Mapping**: CRITICAL (immediate patient risk), URGENT (action in 48h), WARNING (action this week), INFO (awareness).
 - **Orders**: A drug needs an order if its burn rate is below its reorder threshold (typically 14 days). Urgency is EMERGENCY if burn rate < 3 days, EXPEDITED if < 7 days, else ROUTINE.
 - **Substitutes**: A drug needs a substitute if it has a high criticality (rank <= 5) and is in the IMMEDIATE or WARNING zone with a confirmed external shortage signal.
@@ -78,7 +77,8 @@ You will receive JSON data from:
 - Agent 1 (FDA Monitor): Official shortage statuses.
 - Agent 2 (News Analyzer): Public sentiment and disruption risks.
 
-Synthesize all inputs and use the following framework to generate a response.
+Synthesize all inputs and use the following framework to generate a response. Keep responses concise and actionable. If there is a shortage of a drug and it cannot be restocked easily, 
+recommend the drug that is the most similar to the shortage drug and is most available.
 {decision_framework}
 """
 
@@ -144,9 +144,123 @@ def run(run_id: UUID) -> Optional[Dict[str, Any]]:
         user_prompt = json.dumps(user_prompt_data, default=str)
 
         # 3. Call LLM, with fallback
-        llm_decisions = call_dedalus(system_prompt, user_prompt, API_KEY_INDEX, EXPECTED_JSON_SCHEMA)
+        # INTEGRATING MCP CLIENT-SERVER ARCHITECTURE
+        import subprocess
+        import time
+        import asyncio
+        import sys
+        import os
+        from dedalus_mcp.client import MCPClient
         
-        analysis_payload = llm_decisions
+        # Start the MCP Server as a background process using module execution to resolve imports
+        # Using sys.executable ensures we use the same python environment
+        server_process = subprocess.Popen(
+            [sys.executable, "-m", "agents.mcp_server"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=os.getcwd()  # Ensure CWD is project root
+        )
+        print(f"Started MCP Server (PID={server_process.pid})", flush=True)
+        
+        # Give it a moment to start - increased wait time for robustness
+        time.sleep(5)
+        
+        async def run_overseer_with_mcp():
+            try:
+                # Connect to the MCP Server
+                client = await MCPClient.connect("http://127.0.0.1:8000/mcp")
+                print("Connected to MCP Server.", flush=True)
+                
+                # Fetch available tools from the server
+                available_tools = await client.list_tools()
+                
+                # Convert MCP tools to OpenAI tool schema
+                openai_tools = []
+                for tool in available_tools.tools:
+                    openai_tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": tool.inputSchema
+                        }
+                    })
+                
+                # CRITICAL: Deterministically call the cleanup tool BEFORE the LLM.
+                # This ensures the database is clean regardless of LLM "choice".
+                print("Executing Cleanup Tool (Deterministic): delete_redundant_entries...", flush=True)
+                try:
+                    cleanup_result = await client.call_tool("delete_redundant_entries", {})
+                    metrics = cleanup_result.content[0].text if cleanup_result.content else "No output"
+                    print(f"Cleanup Result: {metrics}", flush=True)
+                    # Add this context to the user prompt so the LLM knows it's done
+                    user_prompt_data["system_note"] = f"Database cleanup completed: {metrics}"
+                    user_prompt_str = json.dumps(user_prompt_data, default=str)
+                except Exception as cleanup_err:
+                    print(f"Warning: Cleanup tool failed: {cleanup_err}", flush=True)
+                    user_prompt_str = user_prompt # Fallback to original prompt
+
+                # Initial LLM Call
+                # We still pass tools if the LLM wants to use them for other reasons, 
+                # but the critical cleanup is already done.
+                response = call_dedalus(system_prompt, user_prompt_str, API_KEY_INDEX, EXPECTED_JSON_SCHEMA, tools=openai_tools)
+                
+                final_response = response
+                
+                # Handle Tool Calls (if any other tools are used or if it tries to call it again)
+                if response and "tool_calls" in response:
+                    tool_calls = response["tool_calls"]
+                    print(f"Overseer elected to use tools: {len(tool_calls)} call(s).", flush=True)
+                    
+                    tool_outputs = []
+                    for tool_call in tool_calls:
+                        function_name = tool_call["function"]["name"]
+                        args_str = tool_call["function"]["arguments"]
+                        args = json.loads(args_str) if args_str else {}
+                        
+                        print(f"Executing Tool via MCP Client: {function_name}({args})", flush=True)
+                        
+                        # Call the tool via MCP Client
+                        result = await client.call_tool(function_name, args)
+                        
+                        # MCP result content is a list of TextContent/ImageContent
+                        result_text = result.content[0].text if result.content else "No output"
+                        
+                        print(f"MCP Tool Result: {result_text}", flush=True)
+                        tool_outputs.append(result_text)
+
+                    # Re-prompt LLM with tool outputs
+                    user_prompt_data["tool_results"] = tool_outputs
+                    # Clear cleanup instruction to avoid double loop if we want, but simple re-prompt works
+                    user_prompt_data["note"] = "Tools have been executed. Please proceed with final decision synthesis."
+                    user_prompt_str = json.dumps(user_prompt_data, default=str)
+                    
+                    print("Re-calling Overseer for final decisions after tool execution...", flush=True)
+                    final_response = call_dedalus(system_prompt, user_prompt_str, API_KEY_INDEX, EXPECTED_JSON_SCHEMA, tools=openai_tools)
+                
+                await client.close()
+                return final_response
+
+            except Exception as e:
+                print(f"MCP Interaction Error: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+                
+                # Check server stderr
+                if server_process.poll() is not None:
+                    stdout, stderr = server_process.communicate()
+                    print(f"MCP Server STDERR: {stderr}", flush=True)
+                
+                # Fallback to no-tool execution if MCP fails
+                return call_dedalus(system_prompt, user_prompt, API_KEY_INDEX, EXPECTED_JSON_SCHEMA)
+            finally:
+                # Terminate the server
+                server_process.terminate()
+                server_process.wait()
+
+        # Run the async logic
+        analysis_payload = asyncio.run(run_overseer_with_mcp())
         if not analysis_payload:
             analysis_payload = generate_fallback_decisions(inventory, agent_outputs)
         
