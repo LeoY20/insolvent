@@ -3,7 +3,7 @@
 **Hospital Pharmacy Supply Chain Intelligence Platform**
 
 A multi-agent AI system that predicts drug shortages, finds substitutes, and generates purchase orders to prevent surgical disruptions.  
-Built for **TartanHacks 2025** at **Carnegie Mellon University**.
+Built for **TartanHacks 2026** at **Carnegie Mellon University**.
 
 ---
 
@@ -104,7 +104,7 @@ npm run dev
 
 ## Credits
 
-Built at **TartanHacks 2025** (Carnegie Mellon University) using:
+Built at **TartanHacks 2026** (Carnegie Mellon University) using:
 - **Supabase** — Database + Realtime
 - **Brave MCP** — Web search for supply chain news
 - **Anthropic Claude** — LLM reasoning
