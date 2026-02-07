@@ -41,14 +41,14 @@ export function ActionCard({ data, onAction, variant = 'default' }: ActionCardPr
         CRITICAL: 'bg-red-100 text-red-800 border-red-200',
         URGENT: 'bg-orange-100 text-orange-800 border-orange-200',
         WARNING: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-        INFO: 'bg-blue-100 text-blue-800 border-blue-200',
+        INFO: 'bg-primary-100 text-primary-800 border-primary-200',
     };
 
     const borderColors: Record<string, string> = {
         CRITICAL: 'border-l-red-500',
         URGENT: 'border-l-orange-500',
         WARNING: 'border-l-yellow-500',
-        INFO: 'border-l-blue-500',
+        INFO: 'border-l-primary-500',
     };
 
     const actionConfig: Record<ActionType, { label: string; icon: JSX.Element; modalTitle: string }> = {
@@ -115,7 +115,7 @@ export function ActionCard({ data, onAction, variant = 'default' }: ActionCardPr
                     <button
                         onClick={handleActionClick}
                         disabled={isProcessing}
-                        className={`px-3 py-1.5 text-xs font-medium rounded bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1.5 transition-colors shrink-0 ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        className={`px-3 py-1.5 text-xs font-medium rounded bg-primary-600 hover:bg-primary-700 text-white flex items-center gap-1.5 transition-colors shrink-0 ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
                         {isProcessing ? 'Processing...' : (
                             <>
@@ -142,9 +142,9 @@ export function ActionCard({ data, onAction, variant = 'default' }: ActionCardPr
                         </div>
                         {/* Details */}
                         {data.details && (
-                            <div className="text-sm bg-blue-50 p-2.5 rounded border border-blue-100">
-                                <p className="font-semibold text-[10px] text-blue-600 uppercase mb-1">Details</p>
-                                <p className="text-blue-900 text-sm">{data.details}</p>
+                            <div className="text-sm bg-primary-50 p-2.5 rounded border border-primary-100">
+                                <p className="font-semibold text-[10px] text-primary-600 uppercase mb-1">Details</p>
+                                <p className="text-primary-900 text-sm">{data.details}</p>
                             </div>
                         )}
                     </div>
@@ -158,7 +158,7 @@ export function ActionCard({ data, onAction, variant = 'default' }: ActionCardPr
                             <span className="text-gray-500">•</span>
                             <span className="text-gray-500">Source: </span>
                             {data.isInternalSource ? (
-                                <Link to="/drugs" className="text-blue-600 hover:underline">
+                                <Link to="/drugs" className="text-primary-600 hover:underline">
                                     {data.source || 'Stock'}
                                 </Link>
                             ) : (data.sourceUrl || (data.source && (data.source.startsWith('http') || data.source.startsWith('www')))) ? (
@@ -166,7 +166,7 @@ export function ActionCard({ data, onAction, variant = 'default' }: ActionCardPr
                                     href={data.sourceUrl || (data.source?.startsWith('www') ? `https://${data.source}` : data.source)}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="text-blue-600 hover:underline"
+                                    className="text-primary-600 hover:underline"
                                 >
                                     {data.source}
                                 </a>

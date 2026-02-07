@@ -93,7 +93,7 @@ export function getSeverityColor(severity: Alert['severity']): string {
     case 'WARNING':
       return 'border-yellow-400 text-yellow-800 bg-yellow-100'
     case 'INFO':
-      return 'border-blue-400 text-blue-800 bg-blue-100'
+      return 'border-primary-400 text-primary-800 bg-primary-100'
     default:
       return 'border-gray-400 text-gray-800 bg-gray-100'
   }
@@ -150,7 +150,7 @@ export function getImpactSeverityColor(severity: Shortage['impact_severity']): s
     case 'MEDIUM':
       return 'border-yellow-400 text-yellow-800 bg-yellow-100'
     case 'LOW':
-      return 'border-blue-400 text-blue-800 bg-blue-100'
+      return 'border-primary-400 text-primary-800 bg-primary-100'
     default:
       return 'border-gray-400 text-gray-800 bg-gray-100'
   }

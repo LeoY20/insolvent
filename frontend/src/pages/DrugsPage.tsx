@@ -147,7 +147,7 @@ export default function DrugsPage() {
                                 <Line
                                   type="monotone"
                                   dataKey="stock"
-                                  stroke="#3b82f6"
+                                  stroke="#10b981"
                                   strokeWidth={2}
                                   name="Projected Stock"
                                   dot={false}
@@ -238,7 +238,7 @@ export default function DrugsPage() {
                                     <div>
                                       <span className="font-medium">{supplier.name}</span>
                                       {supplier.is_nearby_hospital && (
-                                        <span className="ml-2 px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded text-xs">Hospital</span>
+                                        <span className="ml-2 px-1.5 py-0.5 bg-primary-100 text-primary-800 rounded text-xs">Hospital</span>
                                       )}
                                     </div>
                                     <div className="text-right text-xs text-gray-500">

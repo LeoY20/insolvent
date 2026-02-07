@@ -63,14 +63,14 @@ export default function ShortagesPage() {
 
                     if (isInternal) {
                       return (
-                        <Link to="/drugs" className="text-blue-600 hover:underline">
+                        <Link to="/drugs" className="text-primary-600 hover:underline">
                           {shortage.source || 'Stock'}
                         </Link>
                       );
                     }
                     if (isUrl) {
                       return (
-                        <a href={url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                        <a href={url} target="_blank" rel="noreferrer" className="text-primary-600 hover:underline">
                           {shortage.source}
                         </a>
                       );

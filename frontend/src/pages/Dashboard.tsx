@@ -178,14 +178,14 @@ export default function Dashboard() {
         <SummaryCard title="Critical Alerts" value={criticalAlerts} icon={<ShieldAlert size={24} />} colorClass="bg-red-500" />
         <SummaryCard title="Urgent Alerts" value={urgentAlerts} icon={<AlertTriangle size={24} />} colorClass="bg-orange-500" />
         <SummaryCard title="Low Stock Drugs" value={lowStockDrugs} icon={<TrendingDown size={24} />} colorClass="bg-yellow-500" />
-        <SummaryCard title="Active Shortages" value={activeShortages} icon={<Package size={24} />} colorClass="bg-blue-500" />
+        <SummaryCard title="Active Shortages" value={activeShortages} icon={<Package size={24} />} colorClass="bg-primary-500" />
       </div>
 
       <div className="grid grid-cols-1 gap-6">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="space-y-4">
             <h2 className="text-xl font-semibold text-gray-700 flex items-center gap-2">
-              <ShieldAlert className="text-blue-600" />
+              <ShieldAlert className="text-primary-600" />
               Actions Needed
             </h2>
             {actionCardsData.length === 0 ? (
@@ -253,7 +253,7 @@ export default function Dashboard() {
                       <div className="flex items-center justify-end gap-2">
                         <input
                           type="number"
-                          className="w-24 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                          className="w-24 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
                           autoFocus

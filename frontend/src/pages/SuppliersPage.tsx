@@ -39,7 +39,7 @@ export default function SuppliersPage() {
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
         <h1 className="text-3xl font-bold text-gray-800">Suppliers</h1>
         <div className="flex items-center gap-2">
-          <Input 
+          <Input
             placeholder="Filter by drug name..."
             value={drugNameFilter}
             onChange={(e) => setDrugNameFilter(e.target.value)}
@@ -52,7 +52,7 @@ export default function SuppliersPage() {
                 variant={typeFilter === filter ? 'default' : 'ghost'}
                 size="sm"
                 onClick={() => setTypeFilter(filter)}
-                className={`capitalize ${typeFilter === filter ? 'bg-blue-600 text-white' : 'text-gray-600'}`}
+                className={`capitalize ${typeFilter === filter ? 'bg-primary-600 text-white' : 'text-gray-600'}`}
               >
                 {filter}
               </Button>
@@ -84,7 +84,7 @@ export default function SuppliersPage() {
                 <td className="px-4 py-3 text-sm text-right text-gray-600">{supplier.lead_time_days ?? 'N/A'} days</td>
                 <td className="px-4 py-3 text-sm text-right text-gray-600">{formatNumber(supplier.reliability_score * 100)}%</td>
                 <td className="px-4 py-3 text-sm">
-                  <span className={`px-2 py-1 rounded text-xs font-medium ${supplier.is_nearby_hospital ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'}`}>
+                  <span className={`px-2 py-1 rounded text-xs font-medium ${supplier.is_nearby_hospital ? 'bg-primary-100 text-primary-800' : 'bg-gray-100 text-gray-800'}`}>
                     {supplier.is_nearby_hospital ? 'Hospital' : 'Vendor'}
                   </span>
                 </td>

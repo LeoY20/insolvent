@@ -88,7 +88,7 @@ export default function AlertsPage() {
                   <span className="px-2 py-1 rounded text-xs font-medium bg-gray-100 text-gray-800">
                     {alert.alert_type.replace(/_/g, ' ')}
                   </span>
-                  <span className="text-sm font-medium text-blue-600">{alert.drug_name}</span>
+                  <span className="text-sm font-medium text-primary-600">{alert.drug_name}</span>
                 </div>
                 <h3 className="text-base font-semibold text-gray-800">{alert.title}</h3>
                 <p className="text-sm text-gray-600 mt-1">{alert.description}</p>
