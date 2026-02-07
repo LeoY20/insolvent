@@ -124,6 +124,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     title TEXT NOT NULL,
     description TEXT NOT NULL,
     action_payload JSONB,
+    action_required BOOLEAN DEFAULT FALSE,
+    source TEXT,
     acknowledged BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
