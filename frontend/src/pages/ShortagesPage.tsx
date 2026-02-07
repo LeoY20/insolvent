@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase, Shortage, formatDate, getSeverityColor } from '../lib/supabase'
+import { supabase, Shortage, formatDate, getImpactSeverityColor } from '../lib/supabase'
 
 export default function ShortagesPage() {
   const [shortages, setShortages] = useState<Shortage[]>([])
@@ -28,9 +28,8 @@ export default function ShortagesPage() {
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium ${
-                filter === f ? 'bg-primary-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-              }`}
+              className={`px-4 py-2 rounded-lg text-sm font-medium ${filter === f ? 'bg-primary-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                }`}
             >
               {f.charAt(0).toUpperCase() + f.slice(1)}
             </button>
@@ -57,7 +56,7 @@ export default function ShortagesPage() {
                 <td className="px-6 py-4 text-sm text-gray-500">{shortage.type}</td>
                 <td className="px-6 py-4 text-sm text-gray-500">{shortage.source}</td>
                 <td className="px-6 py-4 text-sm">
-                  <span className={`px-2 py-1 rounded text-xs font-medium border ${getSeverityColor(shortage.impact_severity)}`}>
+                  <span className={`px-2 py-1 rounded text-xs font-medium border ${getImpactSeverityColor(shortage.impact_severity)}`}>
                     {shortage.impact_severity}
                   </span>
                 </td>
