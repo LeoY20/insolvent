@@ -57,7 +57,7 @@ export default function ShortagesPage() {
                 <td className="px-6 py-4 text-sm text-gray-500">{shortage.type}</td>
                 <td className="px-6 py-4 text-sm text-gray-500">{shortage.source}</td>
                 <td className="px-6 py-4 text-sm">
-                  <span className={`px-2 py-1 rounded text-xs font-medium border ${getSeverityColor(shortage.impact_severity as any)}`}>
+                  <span className={`px-2 py-1 rounded text-xs font-medium border ${getSeverityColor(shortage.impact_severity)}`}>
                     {shortage.impact_severity}
                   </span>
                 </td>

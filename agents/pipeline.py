@@ -15,6 +15,7 @@ All agents write to agent_logs with the same run_id for correlation.
 """
 
 import uuid
+from uuid import UUID
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -35,7 +36,7 @@ def run_pipeline() -> Dict[str, Any]:
     Returns:
         Pipeline execution summary
     """
-    run_id = str(uuid.uuid4())
+    run_id = uuid.uuid4()
     start_time = datetime.now()
 
     print("\n" + "="*80)
@@ -45,7 +46,7 @@ def run_pipeline() -> Dict[str, Any]:
     print("="*80 + "\n")
 
     results = {
-        "run_id": run_id,
+        "run_id": str(run_id),
         "start_time": start_time.isoformat(),
         "phases": {},
         "errors": []
@@ -88,7 +89,7 @@ def run_pipeline() -> Dict[str, Any]:
             results["phases"]["phase_2"] = {
                 "duration_seconds": phase2_duration,
                 "result": "success",
-                "decisions_count": len(overseer_result.get('decisions', []))
+                "decisions_count": len(overseer_result.get('decisions', [])) if overseer_result else 0
             }
 
             print(f"\n{'='*80}")
@@ -101,6 +102,9 @@ def run_pipeline() -> Dict[str, Any]:
             results["phases"]["phase_2"] = {"result": "failed", "error": str(e)}
             # Cannot continue without Overseer
             raise
+
+        if not overseer_result:
+            raise ValueError("Overseer failed to return results, cannot proceed to conditional phases.")
 
         # ====================================================================
         # PHASE 3: Conditional - Agent 3 (Substitutes)
@@ -115,7 +119,7 @@ def run_pipeline() -> Dict[str, Any]:
             phase3_start = datetime.now()
 
             try:
-                substitute_result = agent_3_substitutes.run(run_id, drugs_needing_substitutes)
+                agent_3_substitutes.run(run_id, drugs_needing_substitutes)
                 phase3_duration = (datetime.now() - phase3_start).total_seconds()
 
                 results["phases"]["phase_3"] = {
@@ -153,7 +157,7 @@ def run_pipeline() -> Dict[str, Any]:
             phase4_start = datetime.now()
 
             try:
-                order_result = agent_4_orders.run(run_id, drugs_needing_orders)
+                agent_4_orders.run(run_id, drugs_needing_orders)
                 phase4_duration = (datetime.now() - phase4_start).total_seconds()
 
                 results["phases"]["phase_4"] = {
@@ -214,72 +218,34 @@ def run_pipeline() -> Dict[str, Any]:
 
         raise
 
-def run_phase_1_parallel(run_id: str) -> Dict[str, Any]:
+def run_phase_1_parallel(run_id: UUID) -> Dict[str, Any]:
     """
     Run Phase 1 agents (0, 1, 2) in parallel using asyncio.
-
-    Args:
-        run_id: UUID of the pipeline run
-
-    Returns:
-        Dictionary with results from each agent
     """
+    async def main():
+        with ThreadPoolExecutor() as executor:
+            loop = asyncio.get_event_loop()
+            tasks = [
+                loop.run_in_executor(executor, agent_0_inventory.run, run_id),
+                loop.run_in_executor(executor, agent_1_fda.run, run_id),
+                loop.run_in_executor(executor, agent_2_news.run, run_id)
+            ]
+            return await asyncio.gather(*tasks, return_exceptions=True)
+
+    agent_results = asyncio.run(main())
+    
     results = {}
-
-    # Create event loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    try:
-        # Run all three agents in parallel
-        tasks = [
-            run_agent_async(agent_0_inventory.run, run_id, "Agent 0"),
-            run_agent_async(agent_1_fda.run, run_id, "Agent 1"),
-            run_agent_async(agent_2_news.run, run_id, "Agent 2")
-        ]
-
-        agent_results = loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
-
-        # Process results
-        agent_names = ["agent_0", "agent_1", "agent_2"]
-
-        for i, result in enumerate(agent_results):
-            agent_name = agent_names[i]
-
-            if isinstance(result, Exception):
-                print(f"\n✗ {agent_names[i]} failed: {result}")
-                results[agent_name] = {"status": "failed", "error": str(result)}
-            else:
-                print(f"\n✓ {agent_names[i]} completed successfully")
-                results[agent_name] = {"status": "success"}
-
-    finally:
-        loop.close()
-
+    agent_names = ["agent_0", "agent_1", "agent_2"]
+    for i, result in enumerate(agent_results):
+        agent_name = agent_names[i]
+        if isinstance(result, Exception):
+            print(f"\n✗ {agent_names[i]} failed: {result}")
+            results[agent_name] = {"status": "failed", "error": str(result)}
+        else:
+            print(f"\n✓ {agent_names[i]} completed successfully")
+            results[agent_name] = {"status": "success"}
     return results
-
-async def run_agent_async(agent_func, run_id: str, agent_label: str) -> Any:
-    """
-    Run an agent function in a thread pool (since agents are synchronous).
-
-    Args:
-        agent_func: The agent's run function
-        run_id: UUID of the pipeline run
-        agent_label: Human-readable agent label for logging
-
-    Returns:
-        Agent result
-    """
-    loop = asyncio.get_event_loop()
-
-    with ThreadPoolExecutor() as executor:
-        result = await loop.run_in_executor(executor, agent_func, run_id)
-
-    return result
 
 if __name__ == '__main__':
     # Test the pipeline
-    result = run_pipeline()
-    print("\nPipeline Result:")
-    import json
-    print(json.dumps(result, indent=2, default=str))
+    run_pipeline()
