@@ -1,10 +1,11 @@
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
-import { Activity, AlertTriangle, Package, Users, Bell } from 'lucide-react'
+import { Activity, AlertTriangle, Package, Users, Bell, ShoppingCart } from 'lucide-react'
 import Dashboard from './pages/Dashboard'
 import DrugsPage from './pages/DrugsPage'
 import ShortagesPage from './pages/ShortagesPage'
 import SuppliersPage from './pages/SuppliersPage'
 import AlertsPage from './pages/AlertsPage'
+import OrdersPage from './pages/OrdersPage'
 
 function Navigation() {
   const location = useLocation()
@@ -15,7 +16,9 @@ function Navigation() {
     { path: '/shortages', label: 'Shortages', icon: AlertTriangle },
     { path: '/suppliers', label: 'Suppliers', icon: Users },
     { path: '/alerts', label: 'Alerts', icon: Bell },
+    { path: '/orders', label: 'Orders', icon: ShoppingCart },
   ]
+
 
   return (
     <nav className="bg-white shadow-sm border-b border-gray-200">
@@ -64,6 +67,7 @@ function App() {
             <Route path="/shortages" element={<ShortagesPage />} />
             <Route path="/suppliers" element={<SuppliersPage />} />
             <Route path="/alerts" element={<AlertsPage />} />
+            <Route path="/orders" element={<OrdersPage />} />
           </Routes>
         </main>
       </div>

@@ -1,176 +1,137 @@
 """
-Agent 4 - Order & Supplier Manager
+Agent 4 — Order Processing & Supplier Selection
 
-Flow:
-  1. Receive drugs needing orders
-  2. Fetch suppliers + inventory and send to LLM for recommendations
-  3. Write order recommendations to alerts
-  4. Log output
+Responsibilities:
+- Monitors 'orders' table for 'CONFIRMED' orders.
+- Analyzes available suppliers for the requested drug.
+- Selects the best supplier based on:
+    1. Lowest price
+    2. Shortest lead time
+    3. Reliability score
+- Updates order status to 'PLACED'.
+- Adds notes explaining the decision.
 
-The LLM handles supplier selection, quantities, and cost estimates.
-If the LLM is unavailable, we log and skip DB writes (no changes).
-
-API Key: DEDALUS_API_KEY_3 (index 2)
+API Key: DEDALUS_API_KEY_0 (index 0) - reused
 """
 
 import json
-import traceback
 from uuid import UUID
+from typing import Optional, Dict, Any, List
+import traceback
 
 from agents.shared import (
     supabase,
-    call_dedalus,
     log_agent_output,
-    get_suppliers,
-    get_drugs_inventory,
-    HOSPITAL_LOCATION,
+    call_dedalus,
 )
 
-AGENT_NAME = "agent_4"
-API_KEY_INDEX = 2
+AGENT_NAME = "agent_4_orders"
 
-LLM_RESPONSE_SCHEMA = {
-    "orders": [
-        {
-            "drug_name": "string",
-            "quantity": 0,
-            "unit": "string",
-            "urgency": "EMERGENCY | EXPEDITED | ROUTINE",
-            "recommended_supplier": "string",
-            "supplier_type": "DISTRIBUTOR | MANUFACTURER | NEARBY_HOSPITAL",
-            "estimated_cost": 0,
-            "estimated_delivery_days": 0,
-            "backup_supplier": "string",
-            "reasoning": "string",
-        }
-    ],
-    "hospital_transfer_requests": [
-        {
-            "target_hospital": "string",
-            "drug_name": "string",
-            "quantity": 0,
-            "justification": "string",
-        }
-    ],
-    "cost_summary": {
-        "total_estimated_cost": 0,
-        "emergency_orders_cost": 0,
-        "routine_orders_cost": 0,
-    },
-    "summary": "string",
-}
+def fetch_confirmed_orders():
+    """Fetches all orders with status 'CONFIRMED'."""
+    response = supabase.table('orders').select('*, drug:drugs(*)').eq('status', 'CONFIRMED').execute()
+    return response.data or []
 
+def fetch_suppliers_for_drug(drug_id: str):
+    """Fetches active suppliers for a specific drug."""
+    response = supabase.table('suppliers').select('*').eq('drug_id', drug_id).eq('active', True).execute()
+    return response.data or []
 
-def build_system_prompt() -> str:
-    return f"""You are an expert pharmaceutical procurement specialist.
+def select_best_supplier(suppliers: List[Dict]) -> Optional[Dict]:
+    """
+    Selects the best supplier based on simple logic:
+    Priority:
+    1. Nearby Hospital (fastest usually)? No, prioritize Price -> Lead Time -> Reliability.
+    Actually, let's use a weighted score:
+    Score = (1/Price) * 0.5 + (1/LeadTime) * 0.3 + Reliability * 0.2
+    
+    For now, let's keep it deterministic and simple for the demo:
+    Sort by Price (asc), then Lead Time (asc), then Reliability (desc).
+    """
+    if not suppliers:
+        return None
+        
+    # Valid suppliers must have a price
+    valid_suppliers = [s for s in suppliers if s.get('price_per_unit') is not None]
+    
+    if not valid_suppliers:
+        return None
 
-Hospital location:
-{HOSPITAL_LOCATION}
+    # Sort: Price ASC, Lead Time ASC, Reliability DESC
+    def sort_key(s):
+        price = float(s.get('price_per_unit') or 999999)
+        lead_time = s.get('lead_time_days') or 999
+        reliability = float(s.get('reliability_score') or 0)
+        return (price, lead_time, -reliability)
 
-You will receive:
-1. Order requests (drug name, quantity, urgency).
-2. Available suppliers (from the database).
-3. Current drug pricing (from inventory).
+    valid_suppliers.sort(key=sort_key)
+    return valid_suppliers[0]
 
-Your job:
-- Select the best supplier for each order based on urgency, cost, and reliability.
-- Recommend backup suppliers for critical orders.
-- Estimate delivery days and total cost.
-- If hospital-to-hospital transfer is best, include it in hospital_transfer_requests.
-
-Respond with valid JSON matching the provided schema."""
-
-
-def analyze_with_llm(orders: list, suppliers: list, inventory: list) -> dict | None:
-    system_prompt = build_system_prompt()
-    user_prompt = json.dumps(
-        {
-            "orders_to_process": orders,
-            "available_suppliers": suppliers,
-            "current_drug_pricing": [
-                {k: v for k, v in drug.items() if k in ["name", "price_per_unit", "unit"]}
-                for drug in inventory
-            ],
-        },
-        default=str,
-    )
-
-    result = call_dedalus(system_prompt, user_prompt, API_KEY_INDEX, LLM_RESPONSE_SCHEMA)
-    if result and "orders" in result:
-        return result
-
-    return None
-
-
-def write_alerts(run_id: UUID, analysis: dict, inventory: list):
-    if not supabase:
-        print("  No Supabase client - skipping DB writes.")
+def process_order(order: Dict):
+    """Processes a single confirmed order."""
+    print(f"  Processing Order {order['id']} for drug {order['drug']['name']}...")
+    
+    drug_id = order['drug_id']
+    suppliers = fetch_suppliers_for_drug(drug_id)
+    
+    if not suppliers:
+        print(f"  No suppliers found for drug {drug_id}. Marking order as FAILED.")
+        supabase.table('orders').update({
+            'status': 'FAILED',
+            'notes': 'No active suppliers found for this drug.'
+        }).eq('id', order['id']).execute()
         return
 
-    inventory_by_name = {d["name"]: d for d in inventory}
-    alerts_to_insert = []
-
-    for order in analysis.get("orders", []):
-        drug_id = inventory_by_name.get(order.get("drug_name"), {}).get("id")
-        alerts_to_insert.append(
-            {
-                "run_id": str(run_id),
-                "alert_type": "AUTO_ORDER_PLACED",
-                "severity": "URGENT" if order.get("urgency") == "EMERGENCY" else "WARNING",
-                "drug_name": order.get("drug_name"),
-                "drug_id": drug_id,
-                "title": f"Order Recommended: {order.get('quantity')} {order.get('unit')} of {order.get('drug_name')}",
-                "description": f"Recommended supplier: {order.get('recommended_supplier')}. Reason: {order.get('reasoning')}",
-                "action_payload": order,
-            }
+    best_supplier = select_best_supplier(suppliers)
+    
+    if best_supplier:
+        notes = (
+            f"Auto-selected supplier '{best_supplier['name']}'. "
+            f"Price: ${best_supplier['price_per_unit']}/unit, "
+            f"Lead Time: {best_supplier['lead_time_days']} days, "
+            f"Reliability: {int(best_supplier['reliability_score'] * 100)}%."
         )
+        print(f"  Selected Supplier: {best_supplier['name']}")
+        
+        supabase.table('orders').update({
+            'status': 'PLACED',
+            'supplier_id': best_supplier['id'],
+            'notes': notes
+        }).eq('id', order['id']).execute()
+    else:
+        print("  Failed to select a supplier (valid suppliers missing data).")
+        supabase.table('orders').update({
+            'status': 'FAILED',
+            'notes': 'Suppliers exist but have invalid data (missing price).'
+        }).eq('id', order['id']).execute()
 
-    if alerts_to_insert:
-        print(f"  Inserting {len(alerts_to_insert)} order alerts into the database...")
-        supabase.table("alerts").insert(alerts_to_insert).execute()
-        print("  Alert insertion complete.")
 
-
-def run(run_id: UUID, drugs_needing_orders: list):
-    print(f"\n{'='*60}")
-    print(f"Agent 4: Order Manager  |  run_id: {run_id}")
-    print(f"{'='*60}")
-
-    if not drugs_needing_orders:
-        print("  No drugs require orders. Skipping.")
-        log_agent_output(AGENT_NAME, run_id, {"orders": []}, "No orders required.")
-        print(f"{'='*60}\n")
-        return
-
+def run(run_id: UUID, ignored_arg=None) -> Dict[str, Any]:
+    """Executes the Order Agent workflow."""
+    print(f"\n----- Running Agent 4 (Orders) for run_id: {run_id} -----")
+    
     try:
-        suppliers = get_suppliers(active_only=True) or []
-        inventory = get_drugs_inventory() or []
-        print(f"  {len(suppliers)} suppliers, {len(inventory)} inventory records fetched.")
-
-        analysis = analyze_with_llm(drugs_needing_orders, suppliers, inventory)
-        if analysis:
-            print("  LLM analysis complete.")
-            write_alerts(run_id, analysis, inventory)
-            log_agent_output(AGENT_NAME, run_id, analysis, analysis.get("summary", "Done."))
-        else:
-            summary = "LLM unavailable - no order updates performed."
-            print(f"  {summary}")
-            log_agent_output(AGENT_NAME, run_id, {"summary": summary}, summary)
-
+        confirmed_orders = fetch_confirmed_orders()
+        print(f"  Found {len(confirmed_orders)} confirmed orders in queue.")
+        
+        processed_count = 0
+        for order in confirmed_orders:
+            process_order(order)
+            processed_count += 1
+            
+        summary = f"Processed {processed_count} confirmed orders."
+        log_agent_output(AGENT_NAME, run_id, {"processed": processed_count}, summary)
+        
+        print("----- Agent 4 finished -----")
+        return {"processed": processed_count, "summary": summary}
+        
     except Exception as e:
-        msg = f"Agent 4 failed: {e}"
-        print(f"  ERROR: {msg}")
+        error_msg = f"Agent 4 failed: {str(e)}"
+        print(f"  ERROR: {error_msg}")
         traceback.print_exc()
-        log_agent_output(AGENT_NAME, run_id, {"error": str(e), "trace": traceback.format_exc()}, msg)
-
-    print(f"{'='*60}\n")
-
+        log_agent_output(AGENT_NAME, run_id, {"error": str(e)}, error_msg)
+        return {"error": str(e)}
 
 if __name__ == "__main__":
-    run(
-        UUID("00000000-0000-0000-0000-000000000005"),
-        [
-            {"drug_name": "Epinephrine (Adrenaline)", "quantity": 50, "urgency": "EMERGENCY"},
-            {"drug_name": "Propofol", "quantity": 100, "urgency": "ROUTINE"},
-        ],
-    )
+    import uuid
+    run(uuid.uuid4())

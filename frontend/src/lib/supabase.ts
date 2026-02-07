@@ -21,6 +21,7 @@ export interface Alert {
   severity: 'CRITICAL' | 'URGENT' | 'WARNING' | 'INFO'
   alert_type: 'RESTOCK_NOW' | 'SHORTAGE_WARNING' | 'SUBSTITUTE_RECOMMENDED' | 'SCHEDULE_CHANGE' | 'SUPPLY_CHAIN_RISK' | 'AUTO_ORDER_PLACED'
   drug_name: string
+  drug_id?: string
   acknowledged: boolean
   source?: string
   source_url?: string
@@ -80,6 +81,19 @@ export interface Supplier {
   reliability_score: number
   is_nearby_hospital: boolean
   active: boolean
+}
+
+export interface Order {
+  id: string
+  created_at: string
+  drug_id: string
+  alert_id?: string
+  quantity: number
+  status: 'PENDING' | 'CONFIRMED' | 'PROCESSING' | 'PLACED' | 'FAILED' | 'CANCELLED'
+  supplier_id?: string
+  notes?: string
+  drug?: { name: string }
+  supplier?: { name: string }
 }
 
 // --- Utility Functions ---
