@@ -2,7 +2,7 @@
 Agent 1 — FDA Drug Shortage Monitor
 
 Responsibilities:
-- Queries openFDA API for drug shortage data
+- Queries openFDA API for drug shortage data (using the shortages endpoint)
 - Fetches existing shortages from database
 - Uses LLM to match FDA data to monitored drugs and assess impact
 - Inserts new shortage records into shortages table
@@ -13,6 +13,7 @@ API Key: DEDALUS_API_KEY_1 (index 0)
 
 import json
 import requests
+import re
 from typing import Dict, Any, List
 from datetime import datetime
 from uuid import UUID
@@ -50,48 +51,57 @@ EXPECTED_JSON_SCHEMA = {
 
 def query_fda_api_for_drug(drug_name: str) -> List[Dict[str, Any]]:
     """
-    Queries relevant FDA endpoints for a given drug name to find signals of shortage.
-    The openFDA API does not have a direct shortage endpoint, so we look for recalls,
-    enforcement actions, and other potential indicators.
+    Queries the FDA Drug Shortages endpoint for a given drug name.
     """
     results = []
-    # Using a generic search term that might appear in recall reasons or product descriptions
-    search_term = f'"{drug_name}"'
+    # Sanitize drug name for search (remove brand names in parens, slashes, etc.)
+    # e.g. "Epinephrine (Adrenaline)" -> "Epinephrine"
+    clean_name = re.split(r'[\(/]', drug_name)[0].strip()
+    
+    # Generic search on the generic_name field
+    search_term = f'generic_name:"{clean_name}"'
     
     try:
-        # Query for recalls and other enforcement actions
-        enforcement_url = f"{FDA_API_BASE}/drug/enforcement.json"
-        params = {'search': f'reason_for_recall:{search_term} OR product_description:{search_term}', 'limit': 5}
-        response = requests.get(enforcement_url, params=params, timeout=15)
+        url = f"{FDA_API_BASE}/drug/shortages.json"
+        params = {'search': search_term, 'limit': 5}
+        response = requests.get(url, params=params, timeout=15)
         
         if response.status_code == 200:
-            enforcement_data = response.json().get('results', [])
-            for item in enforcement_data:
-                results.append({"source": "FDA Enforcement API", "data": item})
-            if enforcement_data:
-                print(f"  Found {len(enforcement_data)} enforcement records for {drug_name}.")
+            shortage_data = response.json().get('results', [])
+            # Filter for current or true shortages if necessary
+            # The API returns shortage records. We consider them relevant.
+            for item in shortage_data:
+                # Add to results if status is Current or similar
+                if item.get('status') == 'Current':
+                    results.append({"source": "FDA Shortages API", "data": item})
+                    
+            if results:
+                print(f"  Found {len(results)} active shortage records for {clean_name} ({drug_name}).")
+        elif response.status_code == 404:
+             # 404 means no shortage record found, which is GOOD for the hospital
+             pass
         else:
-            print(f"  WARNING: FDA enforcement query for {drug_name} returned status {response.status_code}.")
+            print(f"  WARNING: FDA shortages query for {clean_name} returned status {response.status_code}.")
 
     except requests.exceptions.RequestException as e:
-        print(f"  ERROR: FDA API request for {drug_name} failed: {e}")
+        print(f"  ERROR: FDA API request for {clean_name} failed: {e}")
         
     return results
 
 def build_system_prompt() -> str:
     """Builds the system prompt for Agent 1."""
     drug_ranking_info = "\n".join([f"- Rank {d['rank']}: {d['name']} ({d['type']})" for d in MONITORED_DRUGS])
-    return f"""You are an expert FDA drug shortage analyst. Your task is to analyze data from FDA enforcement reports and existing database records to identify and assess drug shortages.
+    return f"""You are an expert FDA drug shortage analyst. Your task is to analyze data from FDA shortage reports and existing database records to identify and assess drug shortages.
 
 The hospital monitors these critical drugs:
 {drug_ranking_info}
 
 You will receive existing shortage records and new data from the FDA API. You must:
-1.  Analyze the FDA data for signals of a new or worsening shortage (e.g., recalls).
+1.  Analyze the FDA data for signals of a new or worsening shortage.
 2.  Match findings to our monitored drug list.
 3.  Assess if a shortage is ONGOING, RESOLVED, or WORSENING.
 4.  Rate the impact severity (LOW, MEDIUM, HIGH, CRITICAL) based on the drug's criticality rank. A shortage for a rank 1-3 drug is CRITICAL. A shortage for a rank 4-6 drug is HIGH.
-5.  Provide a brief reason for the shortage based on the data.
+5.  Provide a brief reason for the shortage based on the data (look for 'reason_for_shortage' or similar fields in the data).
 """
 
 def generate_fallback_analysis(existing_shortages: list, fda_data: dict) -> dict:
@@ -117,20 +127,23 @@ def generate_fallback_analysis(existing_shortages: list, fda_data: dict) -> dict
     # Check for new signals from FDA data
     for drug_name, records in fda_data.items():
         if drug_name not in processed_drugs and records:
-            # Simple rule: any enforcement record is a potential shortage
             drug_info = next((d for d in MONITORED_DRUGS if d['name'] == drug_name), {})
             severity = "LOW"
             if drug_info.get('rank', 10) <= 3: severity = "CRITICAL"
             elif drug_info.get('rank', 10) <= 6: severity = "HIGH"
+            
+            # Extract info from first record
+            first_record = records[0]['data'] if records else {}
+            reason = first_record.get('shortage_reason', 'FDA shortage report detected.')
 
             shortages_found.append({
                 "drug_name": drug_name,
-                "fda_drug_name": drug_name,
+                "fda_drug_name": first_record.get('generic_name', drug_name),
                 "status": "ONGOING",
                 "impact_severity": severity,
-                "reason": f"Fallback analysis detected {len(records)} FDA enforcement record(s).",
+                "reason": reason,
                 "estimated_resolution": "Unknown",
-                "source_url": "https://api.fda.gov/drug/enforcement.json"
+                "source_url": "https://api.fda.gov/drug/shortages.json"
             })
             processed_drugs.add(drug_name)
 
