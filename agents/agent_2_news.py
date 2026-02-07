@@ -4,7 +4,6 @@ Agent 2 — News & Supply Chain Sentiment Analyzer
 Responsibilities:
 - Queries NewsAPI for drug-related and pharma supply chain articles
 - Uses LLM to analyze sentiment and supply chain impact
-- Identifies emerging risks (geopolitical, regulatory, natural disasters)
 - Inserts high-confidence shortage signals into shortages table
 - Logs analysis to agent_logs
 
@@ -12,176 +11,30 @@ API Key: DEDALUS_API_KEY_2 (index 1)
 """
 
 import json
-import os
 import requests
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
-from .shared import (
+from uuid import UUID
+import traceback
+
+from agents.shared import (
     supabase,
     call_dedalus,
     log_agent_output,
     MONITORED_DRUGS,
     MONITORED_DRUG_NAMES,
-    get_criticality_rank,
     NEWS_API_KEY
 )
 
 AGENT_NAME = "agent_2"
 API_KEY_INDEX = 1
-NEWS_API_BASE = "https://newsapi.org/v2"
+NEWS_API_URL = "https://newsapi.org/v2/everything"
 
-def fetch_news_articles() -> List[Dict[str, Any]]:
-    """
-    Fetch news articles from NewsAPI related to monitored drugs and supply chain.
-
-    Returns:
-        List of article dictionaries
-    """
-    if not NEWS_API_KEY or 'your_newsapi_key_here' in NEWS_API_KEY:
-        print("WARNING: NewsAPI key not configured. Using mock data.")
-        return []
-
-    articles = []
-    seen_urls = set()
-
-    # Queries for each monitored drug
-    for drug_name in MONITORED_DRUG_NAMES:
-        query = f'"{drug_name}" AND (shortage OR supply OR manufacturing OR recall)'
-
-        try:
-            response = requests.get(
-                f"{NEWS_API_BASE}/everything",
-                params={
-                    'q': query,
-                    'apiKey': NEWS_API_KEY,
-                    'language': 'en',
-                    'sortBy': 'relevancy',
-                    'pageSize': 5,
-                    'from': (datetime.now() - timedelta(days=7)).isoformat()
-                },
-                timeout=10
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                for article in data.get('articles', []):
-                    url = article.get('url')
-                    if url and url not in seen_urls:
-                        articles.append({
-                            'drug_context': drug_name,
-                            **article
-                        })
-                        seen_urls.add(url)
-            else:
-                print(f"  NewsAPI error for '{drug_name}': {response.status_code}")
-
-        except Exception as e:
-            print(f"  Warning: NewsAPI query failed for '{drug_name}': {e}")
-
-    # General pharma supply chain queries
-    general_queries = [
-        "pharmaceutical supply chain disruption",
-        "drug shortage hospital",
-        "FDA drug recall"
-    ]
-
-    for query in general_queries:
-        try:
-            response = requests.get(
-                f"{NEWS_API_BASE}/everything",
-                params={
-                    'q': query,
-                    'apiKey': NEWS_API_KEY,
-                    'language': 'en',
-                    'sortBy': 'relevancy',
-                    'pageSize': 5,
-                    'from': (datetime.now() - timedelta(days=7)).isoformat()
-                },
-                timeout=10
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                for article in data.get('articles', []):
-                    url = article.get('url')
-                    if url and url not in seen_urls:
-                        articles.append({
-                            'drug_context': 'General',
-                            **article
-                        })
-                        seen_urls.add(url)
-
-        except Exception as e:
-            print(f"  Warning: NewsAPI query failed for '{query}': {e}")
-
-    return articles
-
-def build_system_prompt() -> str:
-    """Build the system prompt for Agent 2."""
-    return f"""You are an expert pharmaceutical supply chain analyst monitoring news for early warning signals of drug shortages and disruptions.
-
-# CONTEXT
-
-The hospital monitors {len(MONITORED_DRUGS)} critical drugs ranked by criticality (1 = most critical):
-
-{json.dumps(MONITORED_DRUGS, indent=2)}
-
-# YOUR TASK
-
-You will receive news articles from the past 7 days related to:
-- Each monitored drug (by name)
-- Pharmaceutical supply chain disruptions
-- Drug shortages and recalls
-
-You must:
-1. Analyze each article for supply chain impact
-2. Determine if it relates to any of our 10 monitored drugs
-3. Score sentiment: POSITIVE (supply expanding), NEUTRAL, NEGATIVE (early warning), CRITICAL (active disruption)
-4. Assess supply chain impact: NONE, LOW, MEDIUM, HIGH, CRITICAL
-5. Assign confidence score (0.0 to 1.0)
-6. Identify emerging macro-level risks
-
-# SIGNAL DETECTION FRAMEWORK
-
-Look for these specific signals:
-- Manufacturing plant shutdowns or FDA warning letters
-- Drug recalls (voluntary or mandated)
-- Raw material / chemical precursor shortages
-- Geopolitical events affecting supply chains (tariffs, trade restrictions, conflicts in manufacturing regions)
-- Natural disasters in manufacturing regions
-- Transportation / logistics disruptions
-- Regulatory changes affecting drug production
-- Pharma company mergers/acquisitions
-- Labor disputes at manufacturing facilities
-
-Sentiment Assessment:
-- CRITICAL: Active disruption (plant shutdown, recall in progress)
-- NEGATIVE: Early warning signal (potential future shortage)
-- NEUTRAL: Informational (no supply impact)
-- POSITIVE: Supply expansion (new manufacturing, shortage resolved)
-
-Supply Chain Impact:
-- CRITICAL: Immediate threat to drug availability for rank 1-3 drugs
-- HIGH: Significant risk for rank 1-6 drugs or moderate risk for rank 1-3
-- MEDIUM: Future risk or affects rank 7-10 drugs
-- LOW: Minimal or indirect impact
-- NONE: No supply chain relevance
-
-Confidence Score:
-- 0.9-1.0: Direct statement about shortage or disruption from authoritative source
-- 0.7-0.9: Strong evidence from credible source
-- 0.5-0.7: Moderate evidence, some uncertainty
-- 0.3-0.5: Weak signal, high uncertainty
-- 0.0-0.3: Speculative or unreliable
-
-# OUTPUT FORMAT
-
-You MUST respond with ONLY valid JSON matching this exact schema:
-
-{{
+# The JSON schema Agent 2 expects the LLM to return
+EXPECTED_JSON_SCHEMA = {
     "articles_analyzed": 0,
     "risk_signals": [
-        {{
+        {
             "drug_name": "string",
             "headline": "string",
             "source": "string",
@@ -190,203 +43,181 @@ You MUST respond with ONLY valid JSON matching this exact schema:
             "supply_chain_impact": "NONE | LOW | MEDIUM | HIGH | CRITICAL",
             "confidence": 0.0,
             "reasoning": "string"
-        }}
+        }
     ],
     "emerging_risks": [
-        {{
+        {
             "description": "string",
             "affected_drugs": ["list"],
             "risk_level": "LOW | MEDIUM | HIGH",
             "time_horizon": "string"
-        }}
+        }
     ],
     "summary": "string"
-}}
+}
 
-Respond with ONLY the JSON. No markdown, no explanations."""
+def fetch_news_articles() -> List[Dict[str, Any]]:
+    """Fetches and deduplicates news articles from NewsAPI."""
+    if not NEWS_API_KEY or 'your_' in NEWS_API_KEY:
+        print("WARNING: NewsAPI key is not configured. Skipping news fetch.")
+        return []
 
-def run(run_id: str) -> Dict[str, Any]:
-    """
-    Execute Agent 2 news analysis.
+    articles = []
+    seen_urls = set()
+    from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    
+    queries = [f'"{name}" AND (shortage OR supply OR recall)' for name in MONITORED_DRUG_NAMES]
+    queries.extend(['"pharmaceutical supply chain disruption"', '"drug shortage hospital"'])
 
-    Args:
-        run_id: UUID of the current pipeline run
-
-    Returns:
-        Analysis results dictionary
-    """
-    print(f"\n{'='*60}")
-    print(f"Agent 2: News & Supply Chain Analyzer")
-    print(f"Run ID: {run_id}")
-    print(f"{'='*60}\n")
-
-    try:
-        # Fetch news articles
-        print("Fetching news articles from NewsAPI...")
-        articles = fetch_news_articles()
-        print(f"✓ Retrieved {len(articles)} articles (deduplicated)")
-
-        if len(articles) == 0:
-            print("  No articles retrieved. Skipping LLM analysis.")
-            analysis = {
-                "articles_analyzed": 0,
-                "risk_signals": [],
-                "emerging_risks": [],
-                "summary": "No news articles found in the past 7 days."
-            }
-        else:
-            # Build user prompt with article summaries
-            article_summaries = []
-            for i, article in enumerate(articles[:30], 1):  # Limit to 30 articles
-                article_summaries.append({
-                    'index': i,
-                    'drug_context': article.get('drug_context'),
-                    'title': article.get('title', ''),
-                    'description': article.get('description', ''),
-                    'source': article.get('source', {}).get('name', 'Unknown'),
-                    'url': article.get('url', ''),
-                    'publishedAt': article.get('publishedAt', '')
-                })
-
-            user_prompt = f"""# NEWS ARTICLES (Past 7 Days)
-
-Total articles: {len(article_summaries)}
-
-{json.dumps(article_summaries, indent=2)}
-
-Please analyze these articles for supply chain risks affecting our monitored drugs."""
-
-            # Call Dedalus LLM
-            print("\nCalling Dedalus LLM for news analysis...")
-            system_prompt = build_system_prompt()
-
-            try:
-                analysis = call_dedalus(
-                    user_prompt=user_prompt,
-                    system_prompt=system_prompt,
-                    api_key_index=API_KEY_INDEX,
-                    temperature=0.2
-                )
-                print("✓ Received LLM analysis")
-            except Exception as e:
-                print(f"WARNING: LLM call failed: {e}")
-                # Provide fallback analysis
-                analysis = generate_fallback_analysis(articles)
-                print("✓ Using fallback analysis")
-
-        # Insert high-confidence risk signals into shortages table
-        print("\nProcessing risk signals...")
-        risk_signals = analysis.get('risk_signals', [])
-        inserted_count = 0
-
-        for signal in risk_signals:
-            impact = signal.get('supply_chain_impact', 'NONE')
-            confidence = signal.get('confidence', 0.0)
-            drug_name = signal.get('drug_name')
-
-            # Insert if impact >= HIGH and confidence >= 0.7
-            if impact in ['HIGH', 'CRITICAL'] and confidence >= 0.7 and drug_name:
-                shortage_record = {
-                    'drug_name': drug_name,
-                    'type': 'NEWS_INFERRED',
-                    'source': signal.get('source', 'News Media'),
-                    'source_url': signal.get('url', ''),
-                    'impact_severity': impact,
-                    'description': signal.get('reasoning', signal.get('headline', '')),
-                    'reported_date': datetime.now().date().isoformat(),
-                    'resolved': False
-                }
-
-                supabase.table('shortages').insert(shortage_record).execute()
-                inserted_count += 1
-                print(f"  ✓ Inserted news-inferred shortage for {drug_name} (confidence: {confidence})")
-
-        print(f"✓ Inserted {inserted_count} shortage records from news signals")
-
-        # Log to agent_logs
-        summary = analysis.get('summary', f'News analysis completed. {len(risk_signals)} signals found.')
-        log_agent_output(AGENT_NAME, run_id, analysis, summary)
-
-        print(f"\n✓ Agent 2 completed successfully")
-        print(f"  - Analyzed {analysis.get('articles_analyzed', len(articles))} articles")
-        print(f"  - Found {len(risk_signals)} risk signals")
-        print(f"  - Identified {len(analysis.get('emerging_risks', []))} emerging risks")
-        print(f"  - Inserted {inserted_count} high-confidence shortage alerts")
-
-        return analysis
-
-    except Exception as e:
-        print(f"\n✗ Agent 2 failed: {e}")
-        error_payload = {
-            "error": str(e),
-            "summary": f"Agent 2 failed: {e}"
+    for q in queries:
+        params = {
+            'q': q,
+            'apiKey': NEWS_API_KEY,
+            'language': 'en',
+            'sortBy': 'relevancy',
+            'pageSize': 5,
+            'from': from_date
         }
-        log_agent_output(AGENT_NAME, run_id, error_payload, f"ERROR: {e}")
-        raise
+        try:
+            response = requests.get(NEWS_API_URL, params=params, timeout=15)
+            if response.status_code == 200:
+                for article in response.json().get('articles', []):
+                    url = article.get('url')
+                    if url and url not in seen_urls:
+                        articles.append(article)
+                        seen_urls.add(url)
+            else:
+                print(f"WARNING: NewsAPI query for '{q}' failed with status {response.status_code}")
+        except requests.RequestException as e:
+            print(f"ERROR: NewsAPI request failed for query '{q}': {e}")
+            
+    print(f"Fetched {len(articles)} unique articles from NewsAPI.")
+    return articles
+
+def build_system_prompt() -> str:
+    """Builds the system prompt for Agent 2."""
+    drug_ranking_info = "\n".join([f"- Rank {d['rank']}: {d['name']}" for d in MONITORED_DRUGS])
+    
+    return f"""You are an expert pharmaceutical supply chain analyst. Your task is to analyze news articles for early warning signals of drug shortages.
+
+The hospital monitors these critical drugs:
+{drug_ranking_info}
+
+You must analyze the provided articles and identify risk signals. For each signal, determine:
+- The specific monitored drug affected.
+- The sentiment: POSITIVE (supply expanding), NEUTRAL, NEGATIVE (early warning), or CRITICAL (active disruption).
+- The supply chain impact: NONE, LOW, MEDIUM, HIGH, or CRITICAL. A CRITICAL impact is an immediate threat to a rank 1-3 drug. A HIGH impact affects a rank 1-6 drug.
+- A confidence score (0.0 to 1.0) for your analysis.
+- Your reasoning in a brief sentence.
+
+Look for signals like: plant shutdowns, recalls, raw material shortages, geopolitical events affecting pharma, or new regulations.
+"""
 
 def generate_fallback_analysis(articles: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Generate fallback analysis when LLM is unavailable.
-
-    Args:
-        articles: List of news articles
-
-    Returns:
-        Analysis dictionary matching expected schema
-    """
+    """Generates a simple, keyword-based analysis if the LLM call fails."""
+    print("WARNING: LLM call failed or is mocked. Generating a fallback analysis.")
     risk_signals = []
+    keywords = {'shortage', 'recall', 'disruption', 'shutdown', 'fda warning'}
 
-    # Simple keyword-based analysis
-    negative_keywords = ['shortage', 'recall', 'disruption', 'shutdown', 'suspend']
-    critical_keywords = ['critical', 'emergency', 'halt', 'stop production']
+    for article in articles:
+        text_to_search = (article.get('title', '') + article.get('description', '')).lower()
+        found_keywords = {kw for kw in keywords if kw in text_to_search}
 
-    for article in articles[:20]:
-        title = article.get('title', '').lower()
-        description = article.get('description', '').lower()
-        text = f"{title} {description}"
-        drug_context = article.get('drug_context')
-
-        # Check for negative keywords
-        has_negative = any(kw in text for kw in negative_keywords)
-        has_critical = any(kw in text for kw in critical_keywords)
-
-        if has_negative or has_critical:
-            drug_name = drug_context if drug_context in MONITORED_DRUG_NAMES else None
-
-            if has_critical:
-                sentiment = "CRITICAL"
-                impact = "HIGH"
-                confidence = 0.6
-            elif has_negative:
-                sentiment = "NEGATIVE"
-                impact = "MEDIUM"
-                confidence = 0.5
-            else:
-                continue
-
+        if found_keywords:
+            # Simple logic: find which drug name is in the text
+            affected_drug = "Unknown"
+            for drug_name in MONITORED_DRUG_NAMES:
+                if drug_name.lower() in text_to_search:
+                    affected_drug = drug_name
+                    break
+            
             risk_signals.append({
-                "drug_name": drug_name or "Unknown",
-                "headline": article.get('title', ''),
-                "source": article.get('source', {}).get('name', 'Unknown'),
-                "url": article.get('url', ''),
-                "sentiment": sentiment,
-                "supply_chain_impact": impact,
-                "confidence": confidence,
-                "reasoning": f"Fallback: Keywords detected in article: {', '.join([kw for kw in negative_keywords + critical_keywords if kw in text])}"
+                "drug_name": affected_drug,
+                "headline": article.get('title'),
+                "source": article.get('source', {}).get('name'),
+                "url": article.get('url'),
+                "sentiment": "NEGATIVE",
+                "supply_chain_impact": "MEDIUM",
+                "confidence": 0.5,
+                "reasoning": f"Fallback analysis: Detected keywords: {', '.join(found_keywords)}."
             })
-
+            
     return {
         "articles_analyzed": len(articles),
         "risk_signals": risk_signals,
         "emerging_risks": [],
-        "summary": f"Fallback analysis. Analyzed {len(articles)} articles using keyword detection. Found {len(risk_signals)} potential risk signals."
+        "summary": f"Fallback analysis using keywords found {len(risk_signals)} potential risk signals."
     }
 
+def run(run_id: UUID):
+    """Executes the full workflow for Agent 2."""
+    print(f"\n----- Running Agent 2: News Analyzer for run_id: {run_id} -----")
+    
+    try:
+        # 1. Fetch news
+        articles = fetch_news_articles()
+        if not articles:
+            print("No articles found. Skipping further analysis.")
+            log_agent_output(AGENT_NAME, run_id, {"articles_analyzed": 0}, "No news articles found.")
+            return
+
+        # 2. Prepare for LLM
+        system_prompt = build_system_prompt()
+        # Provide a subset of article data to the LLM to avoid large prompts
+        prompt_articles = [{
+            "title": a.get("title"),
+            "description": a.get("description"),
+            "source": a.get("source", {}).get("name"),
+            "url": a.get("url"),
+        } for a in articles[:20]] # Limit to 20 articles for the prompt
+        user_prompt = json.dumps(prompt_articles, default=str)
+        
+        # 3. Call LLM, with fallback
+        llm_analysis = call_dedalus(system_prompt, user_prompt, API_KEY_INDEX, EXPECTED_JSON_SCHEMA)
+        
+        analysis_payload = llm_analysis
+        if not analysis_payload:
+            analysis_payload = generate_fallback_analysis(articles)
+
+        # 4. Process and insert high-confidence shortages
+        if supabase and 'risk_signals' in analysis_payload:
+            new_shortage_count = 0
+            for signal in analysis_payload['risk_signals']:
+                is_high_impact = signal.get('supply_chain_impact') in ['HIGH', 'CRITICAL']
+                is_high_confidence = signal.get('confidence', 0.0) >= 0.7
+                
+                if is_high_impact and is_high_confidence:
+                    supabase.table('shortages').insert({
+                        'drug_name': signal.get('drug_name'),
+                        'type': 'NEWS_INFERRED',
+                        'source': signal.get('source', 'News Media'),
+                        'impact_severity': signal.get('supply_chain_impact'),
+                        'description': signal.get('reasoning') or signal.get('headline'),
+                        'reported_date': datetime.now().date().isoformat(),
+                        'resolved': False,
+                        'source_url': signal.get('url')
+                    }).execute()
+                    new_shortage_count += 1
+            
+            if new_shortage_count > 0:
+                print(f"Inserted {new_shortage_count} high-confidence shortage records from news.")
+            else:
+                print("No new high-confidence shortages found in news to insert.")
+
+        # 5. Log final output
+        analysis_payload['articles_analyzed'] = len(articles)
+        summary = analysis_payload.get('summary', 'News analysis completed.')
+        log_agent_output(AGENT_NAME, run_id, analysis_payload, summary)
+
+    except Exception as e:
+        error_summary = f"Agent 2 failed: {e}"
+        print(f"ERROR: {error_summary}")
+        traceback.print_exc()
+        log_agent_output(AGENT_NAME, run_id, {"error": str(e), "trace": traceback.format_exc()}, error_summary)
+    
+    finally:
+        print("----- Agent 2 finished -----")
+
 if __name__ == '__main__':
-    # Test Agent 2
-    import uuid
-    test_run_id = str(uuid.uuid4())
-    result = run(test_run_id)
-    print("\n" + "="*60)
-    print("Test Result:")
-    print(json.dumps(result, indent=2, default=str))
+    test_run_id = UUID('00000000-0000-0000-0000-000000000003')
+    run(test_run_id)
