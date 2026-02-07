@@ -147,31 +147,31 @@ def run_pipeline() -> Dict[str, Any]:
         # ====================================================================
         # PHASE 4: Order Management (Data-Driven)
         # ====================================================================
-        print(f"{'='*80}")
-        print(f"PHASE 4: Order Management (Processing Confirmed Orders)")
-        print(f"{'='*80}\n")
+        # print(f"{'='*80}")
+        # print(f"PHASE 4: Order Management (Processing Confirmed Orders)")
+        # print(f"{'='*80}\n")
 
-        phase4_start = datetime.now()
+        # phase4_start = datetime.now()
 
-        try:
-            # Run Agent 4 unconditionally to check for confirmed orders in the DB
-            agent_4_orders.run(run_id)
-            phase4_duration = (datetime.now() - phase4_start).total_seconds()
-
-            results["phases"]["phase_4"] = {
-                "duration_seconds": phase4_duration,
-                "result": "success"
-            }
-
-            print(f"\n{'='*80}")
-            print(f"PHASE 4 COMPLETED in {phase4_duration:.2f}s")
-            print(f"{'='*80}\n")
-
-        except Exception as e:
-            print(f"\n✗ PHASE 4 FAILED: {e}")
-            results["errors"].append(f"Phase 4 (Orders): {e}")
-            results["phases"]["phase_4"] = {"result": "failed", "error": str(e)}
-            # Continue execution despite failure
+        # try:
+        #     # Run Agent 4 unconditionally to check for confirmed orders in the DB
+        #     agent_4_orders.run(run_id)
+        #     phase4_duration = (datetime.now() - phase4_start).total_seconds()
+        #
+        #     results["phases"]["phase_4"] = {
+        #         "duration_seconds": phase4_duration,
+        #         "result": "success"
+        #     }
+        #
+        #     print(f"\n{'='*80}")
+        #     print(f"PHASE 4 COMPLETED in {phase4_duration:.2f}s")
+        #     print(f"{'='*80}\n")
+        #
+        # except Exception as e:
+        #     print(f"\n✗ PHASE 4 FAILED: {e}")
+        #     results["errors"].append(f"Phase 4 (Orders): {e}")
+        #     results["phases"]["phase_4"] = {"result": "failed", "error": str(e)}
+        #     # Continue execution despite failure
 
         # ====================================================================
         # PIPELINE COMPLETE

@@ -89,9 +89,11 @@ export interface Order {
   drug_id: string
   alert_id?: string
   quantity: number
-  status: 'PENDING' | 'CONFIRMED' | 'PROCESSING' | 'PLACED' | 'FAILED' | 'CANCELLED'
+  status: 'PENDING' | 'ANALYZING' | 'SUGGESTED' | 'CONFIRMED' | 'PROCESSING' | 'PLACED' | 'FAILED' | 'CANCELLED'
   supplier_id?: string
   notes?: string
+  unit_price?: number
+  total_price?: number
   drug?: { name: string }
   supplier?: { name: string }
 }

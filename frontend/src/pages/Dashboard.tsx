@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { AlertTriangle, ShieldAlert, TrendingDown, Package, Check, X, Pencil } from 'lucide-react'
 import { supabase, Alert, Drug, Shortage, formatNumber, getBurnRateColor } from '../lib/supabase'
 import { SummaryCard } from '../components/SummaryCard'
@@ -107,14 +108,7 @@ export default function Dashboard() {
     }
   }
 
-  async function handleResolveShortage(shortageId: string) {
-    setShortages((prev) => prev.filter((s) => s.id !== shortageId))
-    const { error } = await supabase.from('shortages').update({ resolved: true }).eq('id', shortageId)
-    if (error) {
-      console.error("Failed to resolve shortage:", error)
-      fetchData()
-    }
-  }
+
 
   async function handleUpdateStock(drugId: string) {
     const newVal = parseInt(editValue, 10)
@@ -157,12 +151,17 @@ export default function Dashboard() {
     }
   }
 
+  const navigate = useNavigate();
+
   function handleCardAction(data: ActionCardData) {
+    if (data.actionType === 'order') {
+      // Navigate to Orders page for processing
+      navigate('/orders');
+      return;
+    }
+
     if (data.originalShortage) {
-      // ... (existing action handling logic)
-      if (data.actionType === 'order' && data.originalAlert) {
-        handleAcknowledge(data.originalAlert.id);
-      }
+      // Only resolve/supplier actions remain here
     } else if (data.originalAlert) {
       handleAcknowledge(data.originalAlert.id);
     }
