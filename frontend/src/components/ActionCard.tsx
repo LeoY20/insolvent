@@ -161,8 +161,13 @@ export function ActionCard({ data, onAction, variant = 'default' }: ActionCardPr
                                 <Link to="/drugs" className="text-blue-600 hover:underline">
                                     {data.source || 'Stock'}
                                 </Link>
-                            ) : data.sourceUrl ? (
-                                <a href={data.sourceUrl} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                            ) : (data.sourceUrl || (data.source && (data.source.startsWith('http') || data.source.startsWith('www')))) ? (
+                                <a
+                                    href={data.sourceUrl || (data.source?.startsWith('www') ? `https://${data.source}` : data.source)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-blue-600 hover:underline"
+                                >
                                     {data.source}
                                 </a>
                             ) : (

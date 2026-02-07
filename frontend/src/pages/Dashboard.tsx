@@ -141,35 +141,14 @@ export default function Dashboard() {
     }
   }
 
-  // Build action cards data from shortages + alerts
+  // Build action cards data from alerts only (ignore shortages for actions as per request)
   const actionCardsData = useMemo(() => {
-    const cards: ActionCardData[] = [];
-
-    // Add shortages with their related alerts
-    shortages.forEach((shortage) => {
-      // Find related alert if any (doesn't stricty rely on action_required logic for binding, but good to check)
-      const relatedAlert = alerts.find(a =>
-        !a.acknowledged &&
-        a.drug_name === shortage.drug_name &&
-        (a.action_required === true)
-      );
-      const cardData = createActionCardData(shortage, relatedAlert);
-      if (cardData) cards.push(cardData);
-    });
-
-    // Add orphan actionable alerts (not linked to a shortage)
-    alerts.filter(a =>
-      !a.acknowledged &&
-      a.action_required === true &&
-      !shortages.some(s => s.drug_name === a.drug_name)
-    ).forEach(alert => {
-      const cardData = createActionCardData(undefined, alert);
-      if (cardData) cards.push(cardData);
-    });
-
-    // Sort by severity
-    return cards.sort((a, b) => getSeverityWeight(b.severity) - getSeverityWeight(a.severity));
-  }, [shortages, alerts]);
+    return alerts
+      .filter(a => !a.acknowledged && a.action_required === true)
+      .map(alert => createActionCardData(undefined, alert))
+      .filter((card): card is ActionCardData => card !== null)
+      .sort((a, b) => getSeverityWeight(b.severity) - getSeverityWeight(a.severity));
+  }, [alerts]);
 
   // System alerts (non-actionable)
   const systemAlertsData = useMemo(() => {

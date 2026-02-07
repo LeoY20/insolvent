@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase, Shortage, formatDate, getImpactSeverityColor } from '../lib/supabase'
 
 export default function ShortagesPage() {
@@ -54,7 +55,29 @@ export default function ShortagesPage() {
               <tr key={shortage.id} className="hover:bg-gray-50">
                 <td className="px-6 py-4 text-sm font-medium text-gray-900">{shortage.drug_name}</td>
                 <td className="px-6 py-4 text-sm text-gray-500">{shortage.type}</td>
-                <td className="px-6 py-4 text-sm text-gray-500">{shortage.source}</td>
+                <td className="px-6 py-4 text-sm text-gray-500">
+                  {(() => {
+                    const isInternal = shortage.source?.toLowerCase().includes('stock') || shortage.source?.toLowerCase().includes('inventory');
+                    const isUrl = shortage.source_url || (shortage.source && (shortage.source.startsWith('http') || shortage.source.startsWith('www')));
+                    const url = shortage.source_url || (shortage.source?.startsWith('www') ? `https://${shortage.source}` : shortage.source);
+
+                    if (isInternal) {
+                      return (
+                        <Link to="/drugs" className="text-blue-600 hover:underline">
+                          {shortage.source || 'Stock'}
+                        </Link>
+                      );
+                    }
+                    if (isUrl) {
+                      return (
+                        <a href={url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                          {shortage.source}
+                        </a>
+                      );
+                    }
+                    return shortage.source;
+                  })()}
+                </td>
                 <td className="px-6 py-4 text-sm">
                   <span className={`px-2 py-1 rounded text-xs font-medium border ${getImpactSeverityColor(shortage.impact_severity)}`}>
                     {shortage.impact_severity}
