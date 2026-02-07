@@ -125,6 +125,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     description TEXT NOT NULL,
     action_payload JSONB,
     acknowledged BOOLEAN DEFAULT FALSE,
+    action_required BOOLEAN DEFAULT FALSE,
+    source TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -148,6 +150,25 @@ CREATE TABLE IF NOT EXISTS surgery_schedule (
 );
 
 -- ============================================================================
+-- Table: orders
+-- Orders for drugs
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS orders (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    drug_id UUID REFERENCES drugs(id) ON DELETE SET NULL,
+    alert_id UUID REFERENCES alerts(id) ON DELETE SET NULL,
+    quantity INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'ANALYZING', 'SUGGESTED', 'CONFIRMED', 'PROCESSING', 'PLACED', 'FAILED', 'CANCELLED')),
+    supplier_id UUID REFERENCES suppliers(id) ON DELETE SET NULL,
+    notes TEXT,
+    unit_price DECIMAL(10, 2),
+    total_price DECIMAL(10, 2),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+
+-- ============================================================================
 -- Row-Level Security (RLS)
 -- For hackathon: permissive policies. In production, scope to hospital_id
 -- ============================================================================
@@ -159,6 +180,7 @@ ALTER TABLE substitutes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE alerts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE surgery_schedule ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
 
 -- Permissive policies for all tables
 CREATE POLICY "Allow all operations on drugs" ON drugs FOR ALL USING (true);
@@ -168,6 +190,7 @@ CREATE POLICY "Allow all operations on substitutes" ON substitutes FOR ALL USING
 CREATE POLICY "Allow all operations on agent_logs" ON agent_logs FOR ALL USING (true);
 CREATE POLICY "Allow all operations on alerts" ON alerts FOR ALL USING (true);
 CREATE POLICY "Allow all operations on surgery_schedule" ON surgery_schedule FOR ALL USING (true);
+CREATE POLICY "Allow all operations on orders" ON orders FOR ALL USING (true);
 
 -- ============================================================================
 -- Updated_at trigger function
@@ -182,4 +205,8 @@ $$ LANGUAGE plpgsql;
 
 -- Add trigger to drugs table
 CREATE TRIGGER update_drugs_updated_at BEFORE UPDATE ON drugs
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Add trigger to orders table
+CREATE TRIGGER update_orders_updated_at BEFORE UPDATE ON orders
 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

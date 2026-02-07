@@ -37,7 +37,7 @@ FDA_URL = "https://api.fda.gov/drug/shortages.json"
 # The LLM handles the reverse mapping (FDA results → monitored drugs).
 FDA_SEARCH_TERMS = [
     "Epinephrine", "Oxygen", "Levofloxacin", "Propofol", "Penicillin",
-    "Sodium Chloride", "Heparin", "Warfarin", "Insulin", "Morphine", "Vaccine",
+    "Sodium Chloride", "Heparin", "Warfarin", "Insulin", "Morphine", "Vaccine", "Lidocaine"
 ]
 
 LLM_RESPONSE_SCHEMA = {
