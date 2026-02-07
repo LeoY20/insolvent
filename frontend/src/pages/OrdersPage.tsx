@@ -14,6 +14,14 @@ export default function OrdersPage() {
         fetchData();
     }, [activeTab]);
 
+    // Auto-refresh for status updates when tracking
+    useEffect(() => {
+        if (activeTab === 'tracking') {
+            const interval = setInterval(fetchData, 2000);
+            return () => clearInterval(interval);
+        }
+    }, [activeTab]);
+
     async function fetchData() {
         setLoading(true);
         if (activeTab === 'alerts') {
@@ -44,39 +52,49 @@ export default function OrdersPage() {
         if (!alert.drug_id) return;
         setProcessingId(alert.id);
 
-        // 1. Create the order
-        const { error: orderError } = await supabase.from('orders').insert({
+        // 1. Create the order (PENDING)
+        const { data, error: orderError } = await supabase.from('orders').insert({
             drug_id: alert.drug_id,
             alert_id: alert.id,
-            quantity: 100, // Default quantity, could be dynamic
+            quantity: 100, // Default, will be updated by agent
             status: 'PENDING',
             notes: `Triggered by alert: ${alert.title}`
-        });
+        }).select().single();
 
-        if (orderError) {
+        if (orderError || !data) {
             console.error('Error creating order:', orderError);
             window.alert('Failed to create order');
             setProcessingId(null);
             return;
         }
 
-        // 2. Acknowledge the alert so it disappears from the list
+        // 2. Acknowledge alert
         await supabase.from('alerts').update({ acknowledged: true }).eq('id', alert.id);
 
-        // 3. Switch tab to tracking
+        // 3. Trigger Analysis (Fire and forget, UI will poll/update)
+        try {
+            fetch(`http://localhost:8000/api/analyze-order/${data.id}`, { method: 'POST' });
+        } catch (e) {
+            console.error("Failed to trigger analysis", e);
+        }
+
+        // 4. Switch tab
         setProcessingId(null);
         setActiveTab('tracking');
     }
 
-    async function confirmOrder(orderId: string) {
-        setProcessingId(orderId);
+    async function confirmOrder(order: Order) {
+        if (!order.supplier_id) return;
+        setProcessingId(order.id);
+
         const { error } = await supabase
             .from('orders')
-            .update({ status: 'CONFIRMED' })
-            .eq('id', orderId);
+            .update({ status: 'PLACED' })
+            .eq('id', order.id);
 
         if (error) {
             console.error('Error confirming order:', error);
+            window.alert('Failed to place order');
         } else {
             fetchData();
         }
@@ -120,7 +138,7 @@ export default function OrdersPage() {
                 </nav>
             </div>
 
-            {loading ? (
+            {loading && orders.length === 0 && alerts.length === 0 ? (
                 <div className="text-center py-12">Loading...</div>
             ) : activeTab === 'alerts' ? (
                 <div className="space-y-4">
@@ -148,7 +166,7 @@ export default function OrdersPage() {
                                     disabled={processingId === alert.id}
                                     className="bg-primary-600 hover:bg-primary-700"
                                 >
-                                    {processingId === alert.id ? 'Creating...' : 'Create Order'}
+                                    {processingId === alert.id ? 'Starting...' : 'Start Order'}
                                     <ArrowRight className="ml-2 h-4 w-4" />
                                 </Button>
                             </div>
@@ -163,15 +181,14 @@ export default function OrdersPage() {
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order ID</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Drug</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Suggestion</th>
                                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
                             {orders.length === 0 ? (
                                 <tr>
-                                    <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                                    <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
                                         No active orders found.
                                     </td>
                                 </tr>
@@ -187,31 +204,47 @@ export default function OrdersPage() {
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
-                        ${order.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
-                                                    order.status === 'CONFIRMED' ? 'bg-blue-100 text-blue-800' :
-                                                        order.status === 'PLACED' ? 'bg-green-100 text-green-800' :
-                                                            'bg-gray-100 text-gray-800'}`}>
+                        ${order.status === 'PENDING' ? 'bg-gray-100 text-gray-800' :
+                                                    order.status === 'ANALYZING' ? 'bg-blue-100 text-blue-800 animate-pulse' :
+                                                        order.status === 'SUGGESTED' ? 'bg-purple-100 text-purple-800' :
+                                                            order.status === 'PLACED' ? 'bg-green-100 text-green-800' :
+                                                                'bg-red-100 text-red-800'}`}>
                                                 {order.status}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                            {/* @ts-ignore: joined data */}
-                                            {order.supplier?.name || (
-                                                order.status === 'CONFIRMED' ? <span className="text-blue-500 animate-pulse">Finding Supplier...</span> : '-'
+                                        <td className="px-6 py-4 text-sm text-gray-500 max-w-md">
+                                            {order.status === 'PENDING' && <span className="text-gray-400">Waiting for analysis...</span>}
+                                            {order.status === 'ANALYZING' && <span className="text-blue-500">Agent is analyzing suppliers...</span>}
+                                            {(order.status === 'SUGGESTED' || order.status === 'PLACED') && (
+                                                <div className="space-y-1">
+                                                    <div className="font-medium text-gray-900">
+                                                        {/* @ts-ignore: joined data */}
+                                                        {order.supplier?.name} <span className="text-gray-500 font-normal"> • Qty: {order.quantity}</span>
+                                                    </div>
+                                                    {order.total_price && (
+                                                        <div className="text-sm font-semibold text-green-700">
+                                                            ${order.total_price.toFixed(2)} <span className="text-xs font-normal text-gray-500">(${order.unit_price?.toFixed(2)}/unit)</span>
+                                                        </div>
+                                                    )}
+                                                    <div className="text-xs text-gray-500 italic">"{order.notes}"</div>
+                                                </div>
                                             )}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                            {formatDate(order.created_at)}
+                                            {order.status === 'FAILED' && <span className="text-red-500">{order.notes}</span>}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                            {order.status === 'PENDING' && (
+                                            {order.status === 'SUGGESTED' && (
                                                 <Button
                                                     size="sm"
-                                                    onClick={() => confirmOrder(order.id)}
+                                                    onClick={() => confirmOrder(order)}
                                                     disabled={processingId === order.id}
-                                                    className="bg-green-600 hover:bg-green-700 text-white"
+                                                    className="bg-purple-600 hover:bg-purple-700 text-white"
                                                 >
-                                                    {processingId === order.id ? 'Confirming...' : 'Confirm'}
+                                                    {processingId === order.id
+                                                        ? 'Placing...'
+                                                        : order.total_price
+                                                            ? `Confirm Order ($${order.total_price.toFixed(2)})`
+                                                            : 'Confirm Order'
+                                                    }
                                                 </Button>
                                             )}
                                             {order.status === 'PLACED' && (
