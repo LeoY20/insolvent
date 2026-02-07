@@ -8,7 +8,7 @@ Flow:
   4. Log output
 
 The LLM handles all drug name matching and impact assessment.
-If the LLM is unavailable, we just carry forward existing records as-is.
+If the LLM is unavailable, we do not update shortages (no changes).
 
 API Key: DEDALUS_API_KEY_1 (index 0)
 """
@@ -87,7 +87,7 @@ def analyze(existing_shortages: list, fda_results: list) -> dict:
     """
     Send FDA data + existing records to the LLM. It handles all matching
     between FDA generic names and our monitored drug list.
-    If LLM fails, just carry forward existing records unchanged.
+    If LLM fails, return None so we make no DB changes.
     """
     drug_list = "\n".join(
         f"  Rank {d['rank']}: {d['name']} ({d['type']})" for d in MONITORED_DRUGS
@@ -121,28 +121,8 @@ Respond with valid JSON matching the provided schema."""
     if result and "shortages_found" in result:
         return result
 
-    # ── Fallback: just carry forward existing records ────────────────
-    print("  LLM unavailable — carrying forward existing records only.")
-    carried = [
-        {
-            "drug_name": rec["drug_name"],
-            "fda_drug_name": rec.get("drug_name"),
-            "status": "ONGOING",
-            "impact_severity": rec.get("impact_severity", "MEDIUM"),
-            "reason": "Carried forward (LLM offline).",
-            "estimated_resolution": None,
-            "source_url": rec.get("source_url"),
-        }
-        for rec in existing_shortages
-        if rec.get("drug_name") in MONITORED_DRUG_NAMES
-    ]
-
-    return {
-        "shortages_found": carried,
-        "no_impact_drugs": [],
-        "summary": f"Fallback: carried forward {len(carried)} existing records. "
-                   f"{len(fda_results)} FDA records could not be analyzed without LLM.",
-    }
+    print("  LLM unavailable — skipping FDA updates.")
+    return None
 
 
 # ── Step 3: Upsert to DB ───────────────────────────────────────────────
@@ -196,8 +176,13 @@ def run(run_id: UUID):
 
         fda_results = query_fda()
         analysis = analyze(existing, fda_results)
-        upsert_shortages(analysis, existing)
-        log_agent_output(AGENT_NAME, run_id, analysis, analysis.get("summary", "Done."))
+        if analysis:
+            upsert_shortages(analysis, existing)
+            log_agent_output(AGENT_NAME, run_id, analysis, analysis.get("summary", "Done."))
+        else:
+            summary = "LLM unavailable - no FDA updates performed."
+            print(f"  {summary}")
+            log_agent_output(AGENT_NAME, run_id, {"summary": summary}, summary)
 
     except Exception as e:
         msg = f"Agent 1 failed: {e}"

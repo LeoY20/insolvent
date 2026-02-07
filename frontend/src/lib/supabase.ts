@@ -13,6 +13,23 @@ if (!supabaseUrl || !supabaseAnonKey) {
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
 // --- Interfaces ---
+
+export interface Evidence {
+  source_type: 'INVENTORY' | 'FDA' | 'NEWS' | 'SURGERY_SCHEDULE'
+  description: string
+  source_url: string | null
+  data_value: string
+}
+
+export interface AlertActionPayload {
+  evidence?: Evidence[]
+  order_details?: {
+    quantity?: number
+    supplier?: string
+    urgency?: string
+  }
+}
+
 export interface Alert {
   id: string
   created_at: string
@@ -22,6 +39,7 @@ export interface Alert {
   alert_type: 'RESTOCK_NOW' | 'SHORTAGE_WARNING' | 'SUBSTITUTE_RECOMMENDED' | 'SCHEDULE_CHANGE' | 'SUPPLY_CHAIN_RISK' | 'AUTO_ORDER_PLACED'
   drug_name: string
   acknowledged: boolean
+  action_payload?: AlertActionPayload
 }
 
 export interface Drug {
@@ -53,6 +71,7 @@ export interface Shortage {
   impact_severity?: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
   description?: string
   source?: string
+  source_url?: string
   type?: string
 }
 

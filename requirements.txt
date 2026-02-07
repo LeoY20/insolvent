@@ -6,6 +6,9 @@ python-dotenv>=1.0.0
 # Supabase client for Python
 supabase>=2.0.0
 
+# Dedalus Labs SDK for web agent
+dedalus-labs>=0.2.0
+
 # HTTP requests for FDA API, News API, Dedalus API
 requests>=2.31.0
 
