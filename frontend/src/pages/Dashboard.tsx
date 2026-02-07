@@ -3,12 +3,48 @@ import { AlertTriangle, ShieldAlert, TrendingDown, Package } from 'lucide-react'
 import { supabase, Alert, Drug, Shortage, formatNumber, getBurnRateColor } from '../lib/supabase'
 import { SummaryCard } from '../components/SummaryCard'
 import { AlertCard } from '../components/AlertCard'
+import { ShortageCard } from '../components/ShortageCard'
 
 export default function Dashboard() {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [drugs, setDrugs] = useState<Drug[]>([])
   const [shortages, setShortages] = useState<Shortage[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Severity weights for sorting
+  const severityWeight = {
+    CRITICAL: 4,
+    URGENT: 3,
+    WARNING: 2,
+    INFO: 1,
+  }
+
+  // Impact weights for shortages
+  const impactWeight = {
+    CRITICAL: 4,
+    HIGH: 3,
+    MEDIUM: 2,
+    LOW: 1,
+  }
+
+  function sortAlerts(alertsList: Alert[]): Alert[] {
+    return [...alertsList].sort((a, b) => {
+      const weightA = severityWeight[a.severity] || 0
+      const weightB = severityWeight[b.severity] || 0
+      // Sort by severity (descending), then by date (descending)
+      if (weightA !== weightB) return weightB - weightA
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    })
+  }
+
+  function sortShortages(shortagesList: Shortage[]): Shortage[] {
+    return [...shortagesList].sort((a, b) => {
+      const weightA = impactWeight[a.impact_severity || 'MEDIUM'] || 0
+      const weightB = impactWeight[b.impact_severity || 'MEDIUM'] || 0
+      if (weightA !== weightB) return weightB - weightA
+      return new Date(b.reported_date || b.created_at).getTime() - new Date(a.reported_date || a.created_at).getTime()
+    })
+  }
 
   useEffect(() => {
     fetchData()
@@ -17,7 +53,14 @@ export default function Dashboard() {
     const alertsChannel = supabase
       .channel('alerts-channel')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'alerts' }, (payload: { new: Alert }) => {
-        setAlerts((prev) => [payload.new as Alert, ...prev])
+        setAlerts((prev) => sortAlerts([payload.new as Alert, ...prev]))
+      })
+      .subscribe()
+
+    const shortagesChannel = supabase
+      .channel('shortages-channel')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'shortages' }, (payload: { new: Shortage }) => {
+        setShortages((prev) => sortShortages([payload.new as Shortage, ...prev]))
       })
       .subscribe()
 
@@ -30,6 +73,7 @@ export default function Dashboard() {
 
     return () => {
       supabase.removeChannel(alertsChannel)
+      supabase.removeChannel(shortagesChannel)
       supabase.removeChannel(drugsChannel)
     }
   }, [])
@@ -38,14 +82,14 @@ export default function Dashboard() {
     setLoading(true)
     try {
       const [alertsRes, drugsRes, shortagesRes] = await Promise.all([
-        supabase.from('alerts').select('*').eq('acknowledged', false).order('created_at', { ascending: false }),
+        supabase.from('alerts').select('*').eq('acknowledged', false),
         supabase.from('drugs').select('*').order('criticality_rank'),
         supabase.from('shortages').select('*').eq('resolved', false),
       ])
 
-      if (alertsRes.data) setAlerts(alertsRes.data)
+      if (alertsRes.data) setAlerts(sortAlerts(alertsRes.data))
       if (drugsRes.data) setDrugs(drugsRes.data)
-      if (shortagesRes.data) setShortages(shortagesRes.data)
+      if (shortagesRes.data) setShortages(sortShortages(shortagesRes.data))
     } catch (error) {
       console.error("Error fetching data:", error)
     } finally {
@@ -56,13 +100,36 @@ export default function Dashboard() {
   async function handleAcknowledge(alertId: string) {
     // Optimistically update UI
     setAlerts((prev) => prev.filter((a) => a.id !== alertId))
-    
+
     const { error } = await supabase.from('alerts').update({ acknowledged: true }).eq('id', alertId)
     if (error) {
       console.error("Failed to acknowledge alert:", error)
       // Revert UI if update fails
-      fetchData() 
+      fetchData()
     }
+  }
+
+  async function handleResolveShortage(shortageId: string) {
+    // Optimistically update UI
+    setShortages((prev) => prev.filter((s) => s.id !== shortageId))
+
+    const { error } = await supabase.from('shortages').update({ resolved: true }).eq('id', shortageId)
+    if (error) {
+      console.error("Failed to resolve shortage:", error)
+      fetchData()
+    }
+  }
+
+  async function handleReorder(alert: Alert) {
+    console.log("Initiating reorder for", alert.drug_name);
+    // Logic to trigger reorder would go here
+    handleAcknowledge(alert.id);
+  }
+
+  async function handleSwapSuppliers(alert: Alert) {
+    console.log("Initiating supplier swap for", alert.drug_name);
+    // Logic to swap supplier would go here
+    handleAcknowledge(alert.id);
   }
 
   const criticalAlerts = alerts.filter((a) => a.severity === 'CRITICAL' && !a.acknowledged).length
@@ -77,7 +144,7 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
-      
+
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
         <SummaryCard title="Critical Alerts" value={criticalAlerts} icon={<ShieldAlert size={24} />} colorClass="bg-red-500" />
@@ -86,20 +153,55 @@ export default function Dashboard() {
         <SummaryCard title="Active Shortages" value={activeShortages} icon={<Package size={24} />} colorClass="bg-blue-500" />
       </div>
 
-      {/* Active Alerts */}
-      <div className="space-y-4">
-        <h2 className="text-xl font-semibold text-gray-700">Active Alerts</h2>
-        {alerts.filter(a => !a.acknowledged).length === 0 ? (
-          <div className="text-center bg-white p-8 rounded-lg shadow-sm">
-            <p className="text-gray-500">No active alerts. System is stable.</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {alerts.filter(a => !a.acknowledged).map((alert) => (
-              <AlertCard key={alert.id} alert={alert} onAcknowledge={handleAcknowledge} />
-            ))}
-          </div>
-        )}
+      <div className="grid grid-cols-1 gap-6">
+        {/* Detected Shortages Section with Embedded Recommendations */}
+        <div className="space-y-4">
+          <h2 className="text-xl font-semibold text-gray-700 flex items-center gap-2">
+            <AlertTriangle className="text-red-500" />
+            Detected Shortages & Recommendations
+          </h2>
+          {shortages.length === 0 && alerts.filter(a => !a.acknowledged).length === 0 ? (
+            <div className="text-center bg-white p-8 rounded-lg shadow-sm border border-gray-100">
+              <p className="text-gray-500">No active shortages or pending recommendations.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {shortages.map((shortage) => {
+                // Find matching alert for this shortage
+                const relatedAlert = alerts.find(a =>
+                  !a.acknowledged &&
+                  a.drug_name === shortage.drug_name &&
+                  (a.alert_type === 'RESTOCK_NOW' || a.alert_type === 'SUBSTITUTE_RECOMMENDED')
+                );
+
+                return (
+                  <ShortageCard
+                    key={shortage.id}
+                    shortage={shortage}
+                    relatedAlert={relatedAlert}
+                    onResolve={handleResolveShortage}
+                    onReorder={handleReorder}
+                    onSwapSuppliers={handleSwapSuppliers}
+                  />
+                );
+              })}
+
+              {/* Orphan Alerts: Alerts that don't match a specific shortage record but still need attention */}
+              {alerts.filter(a =>
+                !a.acknowledged &&
+                !shortages.some(s => s.drug_name === a.drug_name)
+              ).map(alert => (
+                <AlertCard
+                  key={alert.id}
+                  alert={alert}
+                  onAcknowledge={handleAcknowledge}
+                  onReorder={handleReorder}
+                  onSwapSuppliers={handleSwapSuppliers}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Drug Inventory Table */}
