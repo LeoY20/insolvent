@@ -13,6 +13,7 @@ export default function DrugsPage() {
   const [drugs, setDrugs] = useState<DrugWithRelations[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedDrugId, setExpandedDrugId] = useState<string | null>(null)
+  const [simulatedDrugIds, setSimulatedDrugIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     fetchDrugs()
@@ -79,16 +80,30 @@ export default function DrugsPage() {
     setExpandedDrugId(expandedDrugId === drugId ? null : drugId)
   }
 
-  function generateProjectionData(drug: Drug) {
+  function toggleSimulate(drugId: string) {
+    setSimulatedDrugIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(drugId)) {
+        next.delete(drugId)
+      } else {
+        next.add(drugId)
+      }
+      return next
+    })
+  }
+
+  function generateProjectionData(drug: Drug, extraStock: number = 0) {
     const data = []
     const currentStock = drug.stock_quantity
     const dailyUsage = drug.predicted_usage_rate || drug.usage_rate_daily
 
     for (let day = 0; day <= 30; day++) {
       const projectedStock = Math.max(0, currentStock - (dailyUsage * day))
+      const projectedAfter = Math.max(0, currentStock + extraStock - (dailyUsage * day))
       data.push({
         day: `Day ${day}`,
         stock: Math.round(projectedStock * 10) / 10,
+        stockAfter: Math.round(projectedAfter * 10) / 10,
         reorderThreshold: drug.reorder_threshold_days ? dailyUsage * drug.reorder_threshold_days : 0,
         criticalLevel: dailyUsage * 7
       })
@@ -155,10 +170,22 @@ export default function DrugsPage() {
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         {/* Stock Projection Chart */}
                         <div className="bg-white rounded-lg p-4 shadow-sm">
-                          <h4 className="text-sm font-semibold text-gray-900 mb-4">30-Day Stock Projection</h4>
+                          <div className="flex items-center justify-between mb-4">
+                            <h4 className="text-sm font-semibold text-gray-900">30-Day Stock Projection</h4>
+                            <button
+                              onClick={() => toggleSimulate(drug.id)}
+                              className="text-xs px-3 py-1.5 rounded border border-blue-200 text-blue-700 hover:bg-blue-50"
+                            >
+                              {simulatedDrugIds.has(drug.id) ? 'Hide Simulation' : 'Simulate +14 Days Stock'}
+                            </button>
+                          </div>
                           <div className="h-64">
+                            {(() => {
+                              const dailyUsage = drug.predicted_usage_rate || drug.usage_rate_daily
+                              const extraStock = simulatedDrugIds.has(drug.id) ? dailyUsage * 14 : 0
+                              return (
                             <ResponsiveContainer width="100%" height="100%">
-                              <LineChart data={generateProjectionData(drug)}>
+                              <LineChart data={generateProjectionData(drug, extraStock)}>
                                 <CartesianGrid strokeDasharray="3 3" />
                                 <XAxis dataKey="day" tick={{ fontSize: 10 }} interval={4} />
                                 <YAxis tick={{ fontSize: 10 }} />
@@ -172,6 +199,16 @@ export default function DrugsPage() {
                                   name="Projected Stock"
                                   dot={false}
                                 />
+                                {simulatedDrugIds.has(drug.id) && (
+                                  <Line
+                                    type="monotone"
+                                    dataKey="stockAfter"
+                                    stroke="#10b981"
+                                    strokeWidth={2}
+                                    name="Projected Stock (After Order)"
+                                    dot={false}
+                                  />
+                                )}
                                 <Line
                                   type="monotone"
                                   dataKey="reorderThreshold"
@@ -190,7 +227,14 @@ export default function DrugsPage() {
                                 />
                               </LineChart>
                             </ResponsiveContainer>
+                              )
+                            })()}
                           </div>
+                          {simulatedDrugIds.has(drug.id) && (
+                            <p className="text-xs text-gray-500 mt-2">
+                              Simulation assumes an order that adds 14 days of stock based on current usage.
+                            </p>
+                          )}
                         </div>
 
                         {/* Related Information */}
