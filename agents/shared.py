@@ -253,7 +253,7 @@ def get_agent_logs(run_id: UUID, agent_name: Optional[str] = None) -> Optional[L
     """Fetches agent logs for a specific run, optionally filtered by agent name."""
     if not supabase: return None
     try:
-        query = supabase.table("agent_logs").select("payload").eq("run_id", str(run_id))
+        query = supabase.table("agent_logs").select("agent_name,payload").eq("run_id", str(run_id))
         if agent_name:
             query = query.eq("agent_name", agent_name)
         

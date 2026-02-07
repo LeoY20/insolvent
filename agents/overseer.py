@@ -130,7 +130,11 @@ def run(run_id: UUID) -> Optional[Dict[str, Any]]:
         unresolved_shortages = get_unresolved_shortages() or []
 
         # Consolidate agent payloads
-        agent_outputs = {log['payload']['agent_name']: log['payload'] for log in agent_log_data if 'payload' in log and 'agent_name' in log['payload']}
+        agent_outputs = {
+            log['agent_name']: log['payload']
+            for log in agent_log_data
+            if 'payload' in log and 'agent_name' in log
+        }
 
         # 2. Prepare for LLM
         system_prompt = build_system_prompt()

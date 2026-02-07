@@ -1,22 +1,22 @@
 """
-Agent 0 — Inventory Analyzer & Burn Rate Calculator
+Agent 0 - Inventory Analyzer
 
-Responsibilities:
-- Fetches current drug inventory and surgery schedule
-- Computes basic burn rates (stock / daily usage)
-- Uses LLM to predict future usage based on scheduled surgeries
-- Identifies drugs at risk based on burn rate and criticality
-- Updates drugs table with predictions
-- Logs analysis to agent_logs
+Flow:
+  1. Fetch inventory + upcoming surgery schedule
+  2. Send to LLM for matching, prediction, and risk analysis
+  3. Upsert predicted fields in Supabase
+  4. Log output
+
+The LLM handles all calculations and risk assessment.
+If the LLM is unavailable, we log and skip DB writes (no changes).
 
 API Key: DEDALUS_API_KEY_1 (index 0)
 """
 
 import json
-from typing import Dict, Any, List
+import traceback
 from datetime import datetime
 from uuid import UUID
-import traceback
 
 from agents.shared import (
     supabase,
@@ -30,8 +30,7 @@ from agents.shared import (
 AGENT_NAME = "agent_0"
 API_KEY_INDEX = 0
 
-# The JSON schema Agent 0 expects the LLM to return
-EXPECTED_JSON_SCHEMA = {
+LLM_RESPONSE_SCHEMA = {
     "drug_analysis": [
         {
             "drug_name": "string",
@@ -42,7 +41,7 @@ EXPECTED_JSON_SCHEMA = {
             "predicted_burn_rate_days": 0,
             "trend": "INCREASING | STABLE | DECREASING",
             "risk_level": "LOW | MEDIUM | HIGH | CRITICAL",
-            "notes": "string"
+            "notes": "string",
         }
     ],
     "schedule_impact": [
@@ -50,149 +49,115 @@ EXPECTED_JSON_SCHEMA = {
             "surgery_date": "YYYY-MM-DD",
             "surgery_type": "string",
             "drugs_at_risk": ["drug_name"],
-            "recommendation": "string"
+            "recommendation": "string",
         }
     ],
-    "summary": "string"
+    "summary": "string",
 }
 
 
 def build_system_prompt() -> str:
-    """Builds the system prompt for Agent 0, including the full criticality ranking."""
-    drug_ranking_info = "\n".join([f"- Rank {d['rank']}: {d['name']} ({d['type']})" for d in MONITORED_DRUGS])
-    
-    return f"""You are an expert hospital pharmacy inventory analyst. Your task is to analyze drug inventory levels, predict future usage based on surgical demand, and identify supply risks. Prioritize higher-criticality drugs in your analysis.
+    drug_ranking_info = "\n".join(
+        [f"- Rank {d['rank']}: {d['name']} ({d['type']})" for d in MONITORED_DRUGS]
+    )
 
-The hospital tracks the following critical drugs, ranked by criticality (1 is most critical):
+    return f"""You are an expert hospital pharmacy inventory analyst.
+
+We monitor these critical drugs (1 is most critical):
 {drug_ranking_info}
 
-You will receive current inventory data and an upcoming surgery schedule. You must:
-1.  Calculate a predicted daily usage rate based on current usage and scheduled surgery demand over the next 30 days.
-2.  Calculate the predicted burn rate in days based on the new predicted usage rate.
-3.  Flag any drug with a burn_rate < 7 days as CRITICAL, and < 14 days as HIGH.
-4.  Identify specific surgeries that may be impacted by low stock.
-5.  Consider the drug's criticality ranking when assessing risk.
-"""
+You will receive:
+1. Current inventory records.
+2. Upcoming surgery schedule.
 
-def aggregate_surgery_demand(surgeries: List[Dict[str, Any]]) -> Dict[str, float]:
-    """Aggregates total drug demand from a list of upcoming surgeries."""
-    demand = {}
-    if not surgeries:
-        return demand
+Your job:
+- Compute predicted daily usage and burn rate (days) using current usage + surgeries.
+- Flag risk levels (CRITICAL if burn_rate < 7 days, HIGH if < 14 days).
+- Consider criticality ranking when assigning risk.
+- Identify surgeries likely impacted by low stock.
+- drug_name in your response MUST exactly match a name from our inventory.
 
-    for surgery in surgeries:
-        for req in surgery.get('drugs_required', []):
-            drug_name = req.get('drug_name')
-            quantity = float(req.get('quantity', 0))
-            if drug_name and quantity > 0:
-                demand[drug_name] = demand.get(drug_name, 0) + quantity
-    return demand
+Respond with valid JSON matching the provided schema."""
 
-def generate_fallback_analysis(drugs: list, surgery_demand: dict) -> dict:
-    """Generates a simple, rule-based analysis if the LLM call fails."""
-    print("WARNING: LLM call failed or is mocked. Generating a fallback analysis.")
-    analysis = {"drug_analysis": [], "schedule_impact": [], "summary": "Fallback analysis due to LLM failure."}
-    
-    for drug in drugs:
-        drug_name = drug['name']
-        stock = float(drug.get('stock_quantity', 0))
-        usage = float(drug.get('usage_rate_daily', 0))
-        
-        # Simplified prediction
-        predicted_usage = usage + (surgery_demand.get(drug_name, 0) / 30)
-        burn_rate = stock / usage if usage > 0 else float('inf')
-        predicted_burn = stock / predicted_usage if predicted_usage > 0 else float('inf')
-        
-        risk = "LOW"
-        if predicted_burn < 14: risk = "HIGH"
-        if predicted_burn < 7: risk = "CRITICAL"
 
-        analysis["drug_analysis"].append({
-            "drug_name": drug_name,
-            "current_stock": stock,
-            "daily_usage_rate": usage,
-            "predicted_daily_usage_rate": round(predicted_usage, 2),
-            "burn_rate_days": round(burn_rate, 1),
-            "predicted_burn_rate_days": round(predicted_burn, 1),
-            "trend": "STABLE" if usage == predicted_usage else "INCREASING" if predicted_usage > usage else "DECREASING",
-            "risk_level": risk,
-            "notes": "Fallback analysis generated without LLM."
-        })
-    return analysis
+def analyze_with_llm(inventory: list, schedule: list) -> dict | None:
+    system_prompt = build_system_prompt()
+    user_prompt = json.dumps(
+        {
+            "current_inventory": inventory,
+            "surgery_schedule": schedule,
+        },
+        default=str,
+    )
+
+    result = call_dedalus(system_prompt, user_prompt, API_KEY_INDEX, LLM_RESPONSE_SCHEMA)
+    if result and "drug_analysis" in result:
+        return result
+
+    return None
+
+
+def upsert_predictions(analysis: dict, inventory: list):
+    if not supabase:
+        print("  No Supabase client - skipping DB writes.")
+        return
+
+    today = datetime.now().isoformat()
+    inventory_by_name = {d["name"]: d for d in inventory}
+
+    upsert_data = []
+    for item in analysis.get("drug_analysis", []):
+        drug_name = item.get("drug_name")
+        if not drug_name or drug_name not in inventory_by_name:
+            continue
+
+        drug_record = inventory_by_name[drug_name]
+        upsert_data.append(
+            {
+                "id": drug_record["id"],
+                "name": drug_record["name"],
+                "type": drug_record["type"],
+                "predicted_usage_rate": item.get("predicted_daily_usage_rate"),
+                "predicted_burn_rate_days": item.get("predicted_burn_rate_days"),
+                "burn_rate_days": item.get("burn_rate_days"),
+                "updated_at": today,
+            }
+        )
+
+    if upsert_data:
+        print(f"  Batch updating {len(upsert_data)} drug records in the database...")
+        supabase.table("drugs").upsert(upsert_data).execute()
+        print("  Database updates complete.")
+
 
 def run(run_id: UUID):
-    """Executes the full workflow for Agent 0."""
-    print(f"\n----- Running Agent 0: Inventory Analyzer for run_id: {run_id} -----")
-    
+    print(f"\n{'='*60}")
+    print(f"Agent 0: Inventory Analyzer  |  run_id: {run_id}")
+    print(f"{'='*60}")
+
     try:
-        # 1. Fetch data
-        inventory = get_drugs_inventory()
-        schedule = get_surgery_schedule(days_ahead=30)
-        if inventory is None or schedule is None:
-            raise ConnectionError("Failed to fetch data from Supabase.")
-        
-        print(f"Fetched {len(inventory)} drug records and {len(schedule)} upcoming surgeries.")
+        inventory = get_drugs_inventory() or []
+        schedule = get_surgery_schedule(days_ahead=30) or []
+        print(f"  {len(inventory)} inventory records, {len(schedule)} scheduled surgeries.")
 
-        # 2. Aggregate surgery demand
-        surgery_demand = aggregate_surgery_demand(schedule)
-        print(f"Aggregated demand for {len(surgery_demand)} drugs from schedule.")
-
-        # 3. Prepare prompts for LLM
-        system_prompt = build_system_prompt()
-        user_prompt_data = {
-            "current_inventory": inventory,
-            "surgery_schedule": schedule
-        }
-        user_prompt = json.dumps(user_prompt_data, default=str)
-        
-        # 4. Call LLM for analysis
-        llm_analysis = call_dedalus(system_prompt, user_prompt, API_KEY_INDEX, EXPECTED_JSON_SCHEMA)
-
-        # 5. Use fallback if LLM fails
-        if not llm_analysis:
-            analysis_payload = generate_fallback_analysis(inventory, surgery_demand)
+        analysis = analyze_with_llm(inventory, schedule)
+        if analysis:
+            print("  LLM analysis complete.")
+            upsert_predictions(analysis, inventory)
+            log_agent_output(AGENT_NAME, run_id, analysis, analysis.get("summary", "Done."))
         else:
-            analysis_payload = llm_analysis
-            print("Successfully received analysis from LLM.")
-
-        # 6. Update database with new predictions
-        if supabase and 'drug_analysis' in analysis_payload:
-            updates = []
-            for item in analysis_payload['drug_analysis']:
-                # Find matching drug from inventory to get its ID
-                drug_record = next((d for d in inventory if d['name'] == item.get('drug_name')), None)
-                if drug_record:
-                    updates.append({
-                        'id': drug_record['id'],
-                        'predicted_usage_rate': item.get('predicted_daily_usage_rate'),
-                        'predicted_burn_rate_days': item.get('predicted_burn_rate_days'),
-                        'burn_rate_days': item.get('burn_rate_days'),
-                        'updated_at': datetime.now().isoformat()
-                    })
-            
-            if updates:
-                # Supabase Python client v1 does not support batch updates, must iterate.
-                # In v2, you could use upsert.
-                print(f"Updating {len(updates)} drug records in the database...")
-                for update in updates:
-                    item_id = update.pop('id')
-                    supabase.table('drugs').update(update).eq('id', item_id).execute()
-                print("Database updates complete.")
-
-        # 7. Log final output
-        summary = analysis_payload.get('summary', 'Inventory analysis completed.')
-        log_agent_output(AGENT_NAME, run_id, analysis_payload, summary)
+            summary = "LLM unavailable - no inventory updates performed."
+            print(f"  {summary}")
+            log_agent_output(AGENT_NAME, run_id, {"summary": summary}, summary)
 
     except Exception as e:
-        error_summary = f"Agent 0 failed: {e}"
-        print(f"ERROR: {error_summary}")
+        msg = f"Agent 0 failed: {e}"
+        print(f"  ERROR: {msg}")
         traceback.print_exc()
-        log_agent_output(AGENT_NAME, run_id, {"error": str(e), "trace": traceback.format_exc()}, error_summary)
-    
-    finally:
-        print("----- Agent 0 finished -----")
+        log_agent_output(AGENT_NAME, run_id, {"error": str(e), "trace": traceback.format_exc()}, msg)
 
-if __name__ == '__main__':
-    # This allows running the agent directly for testing
-    test_run_id = UUID('00000000-0000-0000-0000-000000000001')
-    run(test_run_id)
+    print(f"{'='*60}\n")
+
+
+if __name__ == "__main__":
+    run(UUID("00000000-0000-0000-0000-000000000001"))
