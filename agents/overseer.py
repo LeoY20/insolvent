@@ -328,6 +328,9 @@ def run(run_id: UUID) -> Optional[Dict[str, Any]]:
         time.sleep(5)
         
         async def run_overseer_with_mcp():
+            # Initialize prompt string immediately for fallback safety
+            user_prompt_str = json.dumps(user_prompt_data, default=str)
+
             try:
                 # Connect to the MCP Server
                 client = await MCPClient.connect("http://127.0.0.1:8000/mcp")
@@ -346,10 +349,10 @@ def run(run_id: UUID) -> Optional[Dict[str, Any]]:
                     print(f"Cleanup Result: {metrics}", flush=True)
                     # Add this context to the user prompt so the LLM knows it's done
                     user_prompt_data["system_note"] = f"Database cleanup completed: {metrics}"
+                    # Update the prompt string with new data
+                    user_prompt_str = json.dumps(user_prompt_data, default=str)
                 except Exception as cleanup_err:
                     print(f"Warning: Cleanup tool failed: {cleanup_err}", flush=True)
-
-                user_prompt_str = json.dumps(user_prompt_data, default=str)
 
                 # Initial LLM Call - NO TOOLS passed to prevent hallucinated searches
                 response = call_dedalus(system_prompt, user_prompt_str, API_KEY_INDEX, EXPECTED_JSON_SCHEMA)
@@ -456,6 +459,42 @@ def run(run_id: UUID) -> Optional[Dict[str, Any]]:
         # 5. Log final output
         summary = analysis_payload.get('summary', 'Overseer analysis completed.')
         log_agent_output(AGENT_NAME, run_id, analysis_payload, summary)
+
+        if supabase and 'decisions' in analysis_payload:
+            # 6. Auto-Resolve (Ack) ALERTS that are no longer present
+            # If an alert is in the DB but NOT in the new decisions, it means the condition is cleared.
+            current_decisions = analysis_payload.get('decisions', [])
+            active_signatures = {
+                (d.get('drug_name'), d.get('action_type')) 
+                for d in current_decisions 
+                if d.get('drug_name') and d.get('action_type')
+            }
+            
+            try:
+                # Fetch currently active alerts from DB
+                active_alerts = (
+                    supabase.table('alerts')
+                    .select('id, drug_name, alert_type')
+                    .eq('acknowledged', False)
+                    .execute()
+                    .data or []
+                )
+                
+                ids_to_resolve = []
+                for alert in active_alerts:
+                    sig = (alert.get('drug_name'), alert.get('alert_type'))
+                    # If the old alert is NOT in the new signatures, it's resolved
+                    if sig not in active_signatures:
+                        ids_to_resolve.append(alert['id'])
+                
+                if ids_to_resolve:
+                    print(f"Auto-resolving {len(ids_to_resolve)} outdated alerts...", flush=True)
+                    supabase.table('alerts').update({
+                        'acknowledged': True
+                    }).in_('id', ids_to_resolve).execute()
+                    print(f"Successfully auto-resolved {len(ids_to_resolve)} alerts.", flush=True)
+            except Exception as e:
+                print(f"Warning: Auto-resolve logic failed: {e}", flush=True)
 
         print("----- Overseer finished -----")
         return analysis_payload

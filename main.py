@@ -89,8 +89,29 @@ def main():
             print("Error: Supabase credentials missing.")
             sys.exit(1)
 
+        async def run_pipeline_async():
+            """Wrapper to run synchronous pipeline in thread executor"""
+            loop = asyncio.get_running_loop()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                result = await loop.run_in_executor(pool, run_pipeline)
+            return result
+
+        async def periodic_runner(interval_minutes):
+            """Runs the full pipeline periodically"""
+            while True:
+                # Wait first (since we run once at startup)
+                await asyncio.sleep(interval_minutes * 60)
+                print(f"\n[Periodic] Starting scheduled pipeline run...")
+                try:
+                    result = await run_pipeline_async()
+                    print(f"✓ Periodic run completed. Status: {result.get('status')}")
+                except Exception as e:
+                    print(f"✗ Periodic run failed: {e}")
+
         async def listen_for_changes():
-            print(f"Mode: Continuous execution (Realtime Trigger)")
+            """Listens for Realtime changes on 'drugs' table"""
+            print(f"Mode: Continuous execution (Realtime Trigger + Periodic {args.interval}m)")
             
             # Initialize Async Client
             async_supabase = await create_async_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
@@ -99,31 +120,21 @@ def main():
             # Smart Loop Prevention
             last_run_time = 0
             min_interval = 2  # Seconds - debounce quick clicks
-            # Counter to skip agent self-updates from full pipeline (agent_0 updates 10 drugs)
-            skip_count = 0
 
             def handle_db_change(payload):
-                nonlocal last_run_time, skip_count
+                nonlocal last_run_time
                 current_time = time.time()
 
-                
                 # Inspect Payload Structure (Debug)
                 try:
-                    # supabase-py Realtime returns: {'data': {...}, 'ids': [...]}
-                    # The actual event info is in payload['data']
                     data = payload.get('data', {}) if isinstance(payload, dict) else payload
-                    
                     table_name = data.get('table')
-                    # 'type' can be a string or an enum like RealtimePostgresChangesListenEvent.Update
                     event_type_raw = data.get('type')
                     if hasattr(event_type_raw, 'value'):
-                        event_type = event_type_raw.value  # Get string from enum
+                        event_type = event_type_raw.value
                     else:
                         event_type = str(event_type_raw) if event_type_raw else None
                     
-                    new_record = data.get('record', {})
-                    old_record = data.get('old_record', {})
-
                     print(f"\n[Realtime] Event: {event_type} on table '{table_name}'", flush=True)
                     
                 except Exception as e:
@@ -132,18 +143,9 @@ def main():
 
                 # Only process valid database events
                 if event_type not in ('UPDATE', 'INSERT', 'DELETE'):
-                    print(f"  -> Ignoring non-database event: {event_type}")
                     return
                 
                 if table_name != 'drugs':
-                    print(f"  -> Ignoring event on table: {table_name}")
-                    return
-
-                # Skip counter: After FULL pipeline runs, agent_0 updates 10 drugs
-                # Quick pipeline doesn't update DB, so no skip needed after quick runs
-                if skip_count > 0:
-                    skip_count -= 1
-                    print(f"  -> Skipping agent self-update ({skip_count} remaining to skip)")
                     return
 
                 # Check Debounce (too fast user clicks)
@@ -155,23 +157,27 @@ def main():
                 last_run_time = time.time()
                 
                 # Run quick pipeline in separate thread (Overseer only)
+                # Note: We use run_quick_pipeline directly here as it's fire-and-forget for the callback
+                # But callback is sync, so we must not block.
+                # However, supabase-py callbacks run in a thread?
+                # We'll use a thread executor to be safe.
                 import concurrent.futures
                 try:
                     with concurrent.futures.ThreadPoolExecutor() as executor:
                         future = executor.submit(run_quick_pipeline)
-                        result = future.result()
-                    # Quick pipeline doesn't update DB, so no skip_count needed
-                    print(f"✓ Quick pipeline completed. Status: {result.get('status')}", flush=True)
+                        # We don't wait for result here to avoid blocking the callback thread
+                        # But actually, we want to see output?
+                        # Let's wait briefly or just log start
+                        pass
+                    print(f"✓ Quick pipeline triggered.", flush=True)
                 except Exception as e:
-                    print(f"✗ Quick pipeline failed: {e}")
+                    print(f"✗ Quick pipeline trigger failed: {e}")
 
 
             try:
                 # client.channel is synchronous
                 channel = async_supabase.channel('drug-updates')
                 
-                # channel.on returns the channel (synchronous builder)
-                # AsyncRealtimeChannel uses on_postgres_changes instead of .on()
                 await channel.on_postgres_changes(
                     event='*',
                     schema='public',
@@ -181,35 +187,33 @@ def main():
 
                 print("✓ Subscribed to Realtime events on 'drugs' table.")
                 
-                # Initial Run on Startup (as requested)
-                print("\n[Startup] Running initial pipeline analysis...")
-                import concurrent.futures
-                try:
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(run_pipeline)
-                        result = future.result()
-                    # After FULL pipeline, agent_0 updates 10 drugs -> skip those events
-                    skip_count = 10
-                    print(f"✓ Initial pipeline run completed. Status: {result.get('status')}")
-                    print(f"  (Will skip next {skip_count} updates to prevent self-loop)")
-                except Exception as e:
-                    print(f"✗ Initial pipeline run failed: {e}")
-                    skip_count = 10  # Still set on failure
-
-                print("\n  - Waiting for updates... (Press Ctrl+C to stop)")
-
-
-                # Keep alive
-                while True:
-                    await asyncio.sleep(1)
+                # Run periodic task concurrently
+                await periodic_runner(args.interval)
 
             except Exception as e:
                 print(f"Realtime error: {e}")
                 # Don't try to close the client as it doesn't have a close method exposed here
 
 
+        async def main_async():
+            # 1. Run initial pipeline SYNCHRONOUSLY (await it) before starting listener
+            # This ensures state is fresh and we don't need complex skip logic
+            print("\n[Startup] Running initial pipeline analysis...")
+            try:
+                result = await run_pipeline_async()
+                print(f"✓ Initial pipeline run completed. Status: {result.get('status')}")
+            except Exception as e:
+                print(f"✗ Initial pipeline run failed: {e}")
+
+            # 2. Start Listener + Periodic Loop
+            # The periodic loop is inside listen_for_changes (calls periodic_runner)
+            # await listen_for_changes()
+            
+            # Actually, separating them is cleaner
+            await listen_for_changes()
+
         try:
-            asyncio.run(listen_for_changes())
+            asyncio.run(main_async())
         except KeyboardInterrupt:
             print("\nShutting down...")
             sys.exit(0)
