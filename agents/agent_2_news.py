@@ -234,22 +234,38 @@ The hospital monitors these critical drugs:
 {drug_ranking_info}
 
 CRITICAL REQUIREMENTS FOR RISK SIGNALS:
-1. **RECENCY**: Strongly prefer articles published in the LAST {recent_days} DAYS (after {recent_start}). 
+
+1. **EXPLICIT DRUG MENTION (MANDATORY)**: The article MUST explicitly name the specific drug by name in its title or body.
+   - CORRECT: Article title "FDA Reports Propofol Shortage" → create signal for Propofol only
+   - WRONG: Article about "general drug shortages" → do NOT assign to any drug
+   - WRONG: Article mentions "anesthetics" generally → do NOT assume it means Propofol
+
+2. **ONE ARTICLE = ONE DRUG (STRICT)**: Each article should produce AT MOST one risk_signal.
+   - Do NOT assign the same article URL to multiple drugs
+   - If an article mentions multiple drugs explicitly, pick the most critical one only
+   - Generic shortage news that doesn't name specific drugs = no signal
+
+3. **RECENCY**: Strongly prefer articles published in the LAST {recent_days} DAYS (after {recent_start}).
    You may include older articles (up to {max_days} days) ONLY if they clearly indicate long-term or upcoming shortages.
-2. **SPECIFICITY**: The article must specifically mention one of the monitored drugs listed above.
-3. **CREDIBILITY**: Only include signals from credible sources with working URLs.
-4. **RELEVANCE**: The article must indicate an actual or imminent supply issue, not general industry news.
+
+4. **CREDIBILITY**: Only include signals from credible sources with working URLs.
+
+5. **RELEVANCE**: The article must indicate an actual or imminent supply issue, not general industry news.
 
 For each VALID signal, determine:
-- drug_name: Must EXACTLY match one of the monitored drug names above
+- drug_name: Must EXACTLY match one of the monitored drug names above AND must be EXPLICITLY named in the article
 - published_date: The article's publication date (YYYY-MM-DD format)
 - sentiment: POSITIVE, NEUTRAL, NEGATIVE, or CRITICAL
 - supply_chain_impact: NONE, LOW, MEDIUM, HIGH, or CRITICAL
 - confidence: 0.0 to 1.0 (lower if article is vague or source is uncertain)
-- reasoning: Brief explanation of why this is a credible, recent signal
+- reasoning: Must include the exact quote or phrase from the article that mentions the drug
 
-IMPORTANT: If no articles meet the recency or long-term relevance criteria, return an empty risk_signals array.
-Quality over quantity - only include genuinely actionable intelligence.
+EXAMPLES:
+- Article: "Epinephrine shortage hits hospitals nationwide" → Valid signal for Epinephrine
+- Article: "FDA updates on drug shortage list" → NO SIGNAL (too generic, no specific drug named)
+- Article: "Medical supply chain disruptions" → NO SIGNAL (no drug named)
+
+If no articles explicitly name monitored drugs, return an empty risk_signals array. Quality over quantity.
 """
 
 
@@ -353,6 +369,44 @@ def filter_location_articles(articles: List[Dict[str, Any]]) -> List[Dict[str, A
     return filtered
 
 
+def deduplicate_signals_by_url(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Ensure each URL only appears once in risk_signals.
+    If the same URL is assigned to multiple drugs, keep only the first one
+    (typically the most critical drug based on LLM ordering).
+    This prevents generic articles from being cited for multiple drugs.
+    """
+    signals = payload.get("risk_signals", []) if isinstance(payload, dict) else []
+    seen_urls: set = set()
+    filtered = []
+
+    for s in signals:
+        url = s.get("url")
+        if not url:
+            # No URL - keep the signal but it won't be deduplicated
+            filtered.append(s)
+            continue
+
+        # Normalize URL for comparison
+        normalized_url = url.strip().lower().rstrip('/')
+
+        if normalized_url in seen_urls:
+            drug_name = s.get("drug_name", "Unknown")
+            print(f"  Skipping duplicate URL for {drug_name}: {url[:60]}...")
+            continue
+
+        seen_urls.add(normalized_url)
+        filtered.append(s)
+
+    if isinstance(payload, dict):
+        original_count = len(signals)
+        payload["risk_signals"] = filtered
+        if original_count != len(filtered):
+            print(f"  Deduplicated: {original_count} → {len(filtered)} signals (removed {original_count - len(filtered)} duplicates)")
+
+    return payload
+
+
 def filter_recent_signals(payload: Dict[str, Any], max_days: int = 365) -> Dict[str, Any]:
     """Drop risk_signals older than max_days or missing a parseable date."""
     cutoff = datetime.now() - timedelta(days=max_days)
@@ -404,6 +458,7 @@ def run(run_id: UUID):
 
         analysis_payload = llm_analysis or generate_fallback_analysis(articles)
         analysis_payload = filter_recent_signals(analysis_payload, max_days=365)
+        analysis_payload = deduplicate_signals_by_url(analysis_payload)
 
         # 3. Process Results (Upsert logic for shortages)
         if supabase and 'risk_signals' in analysis_payload:
