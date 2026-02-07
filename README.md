@@ -408,5 +408,3 @@ For questions or issues, please check:
 3. Agent logs for detailed error messages
 
 ---
-
-**Built with ❤️ by Claude Code**
