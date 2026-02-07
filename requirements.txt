@@ -18,3 +18,7 @@ asyncio>=3.4.3
 # Optional: FastAPI for manual trigger API endpoint (if needed later)
 # fastapi>=0.104.0
 # uvicorn>=0.24.0
+
+# Dedalus Labs MCP for Tool Integation (e.g. redundant deletion)
+dedalus-mcp>=0.1.0
+mcp>=1.0.0
