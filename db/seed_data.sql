@@ -1,11 +1,41 @@
 -- ============================================================================
--- PharmaSentinel Seed Data (FIXED)
--- Run this AFTER schema.sql to populate initial data
+-- PharmaSentinel Seed Data (FIXED & ROBUST)
+-- Run this AFTER schema.sql to populate or RESTORE initial data.
+-- Updated to handle duplicates and missing rows gracefully.
 -- ============================================================================
 
 -- ============================================================================
--- Seed: drugs table
+-- 0. CLEANUP: Deduplicate existing rows before creating constraints
+-- ============================================================================
+
+-- Remove duplicate drugs (keep the one with latest ID)
+DELETE FROM drugs a USING drugs b
+WHERE a.id < b.id AND a.name = b.name;
+
+-- Remove duplicate suppliers (keep the one with latest ID)
+DELETE FROM suppliers a USING suppliers b
+WHERE a.id < b.id AND a.name = b.name AND a.drug_name = b.drug_name;
+
+-- ============================================================================
+-- 1. Ensure Unique Constraints Exist (Idempotent)
+-- Required for ON CONFLICT clauses to work correctly.
+-- ============================================================================
+
+-- Drugs: Name must be unique to prevent duplicates during reseeding
+CREATE UNIQUE INDEX IF NOT EXISTS idx_drugs_name_unique ON drugs(name);
+
+-- Suppliers: Name + Drug Name combination should be unique per location/type
+-- Note: A supplier can supply multiple drugs, but (Supplier, Drug) pair is unique here.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_suppliers_unique_pair ON suppliers(name, drug_name);
+
+-- Substitutes: (Drug, Substitute) pair already has a UNIQUE constraint in schema.sql
+-- Surgery Schedule: No strict unique constraint needed for seed, but good practice.
+
+
+-- ============================================================================
+-- 2. Seed: drugs table
 -- The 10 monitored critical drugs with realistic initial stock values
+-- Uses ON CONFLICT DO UPDATE to restore values if row exists (e.g. after soft delete or partial data).
 -- ============================================================================
 
 INSERT INTO drugs (name, type, stock_quantity, unit, price_per_unit, usage_rate_daily, criticality_rank, reorder_threshold_days)
@@ -20,12 +50,19 @@ VALUES
     ('Insulin', 'Diabetes Management', 180, 'vials', 55.00, 12, 8, 14),
     ('Morphine', 'Analgesic/Pain', 100, 'vials', 18.00, 7, 9, 14),
     ('Vaccines', 'Immunization', 250, 'doses', 22.00, 5, 10, 21)
-ON CONFLICT DO NOTHING;
+ON CONFLICT (name) DO UPDATE SET
+    type = EXCLUDED.type,
+    stock_quantity = EXCLUDED.stock_quantity,
+    unit = EXCLUDED.unit,
+    price_per_unit = EXCLUDED.price_per_unit,
+    usage_rate_daily = EXCLUDED.usage_rate_daily,
+    criticality_rank = EXCLUDED.criticality_rank,
+    reorder_threshold_days = EXCLUDED.reorder_threshold_days;
+
 
 -- ============================================================================
--- Seed: suppliers table
--- Major US pharmaceutical distributors + nearby hospitals
--- drug_id resolved via subquery for full referential integrity
+-- 3. Seed: suppliers table
+-- Dependent on drugs table for IDs. Uses subqueries.
 -- ============================================================================
 
 INSERT INTO suppliers (name, drug_name, drug_id, location, lead_time_days, price_per_unit, reliability_score, is_nearby_hospital, active)
@@ -94,11 +131,17 @@ VALUES
     ('Allegheny General Hospital', 'Levofloxacin', (SELECT id FROM drugs WHERE name = 'Levofloxacin'), 'Pittsburgh, PA', 0, 12.00, 0.91, TRUE, TRUE),
     ('Allegheny General Hospital', 'Penicillin',   (SELECT id FROM drugs WHERE name = 'Penicillin'),   'Pittsburgh, PA', 0, 8.00,  0.91, TRUE, TRUE),
     ('Allegheny General Hospital', 'Insulin',      (SELECT id FROM drugs WHERE name = 'Insulin'),      'Pittsburgh, PA', 0, 55.00, 0.91, TRUE, TRUE)
-ON CONFLICT DO NOTHING;
+ON CONFLICT (name, drug_name) DO UPDATE SET
+    drug_id = EXCLUDED.drug_id,
+    price_per_unit = EXCLUDED.price_per_unit,
+    lead_time_days = EXCLUDED.lead_time_days,
+    reliability_score = EXCLUDED.reliability_score,
+    is_nearby_hospital = EXCLUDED.is_nearby_hospital,
+    active = EXCLUDED.active;
+
 
 -- ============================================================================
--- Seed: substitutes table
--- drug_id resolved via subquery to satisfy NOT NULL constraint
+-- 4. Seed: substitutes table
 -- ============================================================================
 
 INSERT INTO substitutes (drug_id, drug_name, substitute_name, equivalence_notes, preference_rank)
@@ -164,9 +207,9 @@ VALUES
      '5% dextrose in water. For specific indications (hypoglycemia, maintenance). Not for resuscitation.', 3)
 ON CONFLICT (drug_name, substitute_name) DO NOTHING;
 
+
 -- ============================================================================
--- Seed: surgery_schedule table
--- Upcoming surgeries with drug requirements
+-- 5. Seed: surgery_schedule table
 -- ============================================================================
 
 INSERT INTO surgery_schedule (surgery_type, scheduled_date, estimated_duration_hours, drugs_required, status)
