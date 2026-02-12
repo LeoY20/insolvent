@@ -5,7 +5,7 @@
 A multi-agent AI supply-chain system that predicts drug shortages, finds substitutes, and generates purchase orders to prevent surgical disruptions.  
 Built for **TartanHacks 2026** at **Carnegie Mellon University**.
 
-Presentation link: https://docs.google.com/presentation/d/1Iba67kRqY12UamRNKHBwVE20Duxst-jXcgt8l6qNKKo/edit?slide=id.gd431007ba2_0_208#slide=id.gd431007ba2_0_208
+Presentation link: [https://docs.google.com/presentation/d/1Iba67kRqY12UamRNKHBwVE20Duxst-jXcgt8l6qNKKo/edit?slide=id.gd431007ba2_0_208#slide=id.gd431007ba2_0_208](https://docs.google.com/presentation/d/1Iba67kRqY12UamRNKHBwVE20Duxst-jXcgt8l6qNKKo/edit?usp=sharing)
 
 ---
 
